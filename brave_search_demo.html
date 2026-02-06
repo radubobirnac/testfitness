@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brave Search MCP Server Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+        }
+        .card {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        code {
+            font-family: 'Courier New', monospace;
+        }
+        .example {
+            border-left: 4px solid #3498db;
+            padding-left: 20px;
+            margin: 20px 0;
+        }
+        .btn {
+            display: inline-block;
+            background-color: #3498db;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .btn:hover {
+            background-color: #2980b9;
+        }
+        .result {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .result-item {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .result-item:last-child {
+            border-bottom: none;
+        }
+        .result-title {
+            color: #1a0dab;
+            font-weight: bold;
+            text-decoration: none;
+            font-size: 1.1em;
+        }
+        .result-url {
+            color: #006621;
+            font-size: 0.9em;
+            margin: 5px 0;
+        }
+        .result-description {
+            color: #444;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Brave Search MCP Server Demo</h1>
+        <p>This demo shows how to use the Brave Search MCP server for web and local search capabilities.</p>
+    </div>
+
+    <div class="card">
+        <h2>What is Brave Search?</h2>
+        <p>The Brave Search MCP server provides tools for accessing the Brave Search API, allowing for:</p>
+        <ul>
+            <li>General web searches for information, news, and articles</li>
+            <li>Local searches for businesses, restaurants, and services</li>
+            <li>Filtering and pagination controls</li>
+            <li>Automatic fallback from local to web search when needed</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>How to Use Brave Web Search</h2>
+        <p>The Brave Web Search tool accepts the following parameters:</p>
+        <pre><code>
+{
+  "query": "your search query",
+  "count": 10, // Optional: Number of results (max 20)
+  "offset": 0  // Optional: Pagination offset (max 9)
+}
+        </code></pre>
+        
+        <div class="example">
+            <h3>Example Web Search Query:</h3>
+            <p><strong>Search for:</strong> "artificial intelligence latest developments"</p>
+            <p><strong>Parameters:</strong></p>
+            <pre><code>
+{
+  "query": "artificial intelligence latest developments",
+  "count": 5
+}
+            </code></pre>
+            
+            <h3>Example Result:</h3>
+            <div class="result">
+                <div class="result-item">
+                    <div class="result-title">The Latest Developments in Artificial Intelligence - 2025 Overview</div>
+                    <div class="result-url">https://example.com/ai-developments-2025</div>
+                    <div class="result-description">A comprehensive look at the most significant AI breakthroughs of 2025, including advances in generative models, reinforcement learning, and multimodal systems.</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-title">How AI is Transforming Healthcare in 2025</div>
+                    <div class="result-url">https://example.com/ai-healthcare-2025</div>
+                    <div class="result-description">Explore how artificial intelligence is revolutionizing medical diagnoses, drug discovery, and personalized treatment plans.</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-title">The State of AI Research: Q2 2025 Report</div>
+                    <div class="result-url">https://example.com/ai-research-q2-2025</div>
+                    <div class="result-description">Latest research findings from leading AI labs, including breakthroughs in natural language understanding and computer vision.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>How to Use Brave Local Search</h2>
+        <p>The Brave Local Search tool accepts the following parameters:</p>
+        <pre><code>
+{
+  "query": "your local search query (e.g., 'coffee shops near central park')",
+  "count": 5  // Optional: Number of results (max 20)
+}
+        </code></pre>
+        
+        <div class="example">
+            <h3>Example Local Search Query:</h3>
+            <p><strong>Search for:</strong> "pizza restaurants in Boston"</p>
+            <p><strong>Parameters:</strong></p>
+            <pre><code>
+{
+  "query": "pizza restaurants in Boston",
+  "count": 3
+}
+            </code></pre>
+            
+            <h3>Example Result:</h3>
+            <div class="result">
+                <div class="result-item">
+                    <div class="result-title">Regina Pizzeria</div>
+                    <div class="result-url">11 Thacher St, Boston, MA 02113</div>
+                    <div class="result-description">
+                        <p>⭐⭐⭐⭐⭐ (4.7/5) - 2,453 reviews</p>
+                        <p>Phone: (617) 227-0765</p>
+                        <p>Hours: Mon-Thu: 11AM-10PM, Fri-Sat: 11AM-11PM, Sun: 12PM-10PM</p>
+                    </div>
+                </div>
+                <div class="result-item">
+                    <div class="result-title">Santarpio's Pizza</div>
+                    <div class="result-url">111 Chelsea St, Boston, MA 02128</div>
+                    <div class="result-description">
+                        <p>⭐⭐⭐⭐⭐ (4.6/5) - 1,872 reviews</p>
+                        <p>Phone: (617) 567-9871</p>
+                        <p>Hours: Mon-Sun: 11:30AM-10:30PM</p>
+                    </div>
+                </div>
+                <div class="result-item">
+                    <div class="result-title">Galleria Umberto</div>
+                    <div class="result-url">289 Hanover St, Boston, MA 02113</div>
+                    <div class="result-description">
+                        <p>⭐⭐⭐⭐⭐ (4.8/5) - 1,265 reviews</p>
+                        <p>Phone: (617) 227-5709</p>
+                        <p>Hours: Mon-Sat: 11AM-2:30PM, Sun: Closed</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Advanced Features</h2>
+        <ul>
+            <li><strong>Pagination:</strong> Use the offset parameter for web searches to navigate through results</li>
+            <li><strong>Result Filtering:</strong> The server automatically handles content filtering based on Brave API settings</li>
+            <li><strong>Automatic Fallback:</strong> Local searches with no results will fall back to web search</li>
+            <li><strong>Detailed Information:</strong> Local search results include ratings, hours, phone numbers, and more</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>Try It Yourself!</h2>
+        <p>To use the Brave Search MCP server in Cline, you can start by asking to search for information or local businesses. Here are some example queries:</p>
+        <ul>
+            <li>"Use Brave Search to find information about renewable energy technologies"</li>
+            <li>"Search for Italian restaurants near Times Square using Brave Search"</li>
+            <li>"Use Brave Search to find the latest news about space exploration"</li>
+            <li>"Find coffee shops in Seattle with Brave Local Search"</li>
+        </ul>
+    </div>
+</body>
+</html>

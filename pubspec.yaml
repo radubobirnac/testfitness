@@ -1,0 +1,76 @@
+name: testfitness
+description: "StrengthWave - A Flutter strength training application for tracking workouts and building strength."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_bloc: ^8.1.6
+
+  # Database
+  sqflite: ^2.3.2
+  path: ^1.9.0
+  shared_preferences: ^2.2.2
+
+  # UI components
+  intl: ^0.20.2
+
+  # Utils
+  uuid: ^4.3.3
+  equatable: ^2.0.5
+  logger: ^2.0.2+1
+  device_info_plus: ^10.1.2
+
+  # Audio
+  audioplayers: ^5.2.1
+
+  # Notifications
+  flutter_local_notifications: ^17.2.1
+  timezone: ^0.9.4
+  connectivity_plus: ^6.1.4
+  fl_chart: ^1.0.0
+  path_provider: ^2.1.5
+  share_plus: ^11.0.0
+  google_generative_ai: ^0.4.7
+  flutter_tts: ^4.2.2
+  http: ^1.2.0
+  flutter_dotenv: ^5.1.0
+  file_picker: ^8.1.2
+
+  # Bluetooth & Heart Rate
+  flutter_blue_plus: ^1.32.12
+  permission_handler: ^11.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  # build_runner: ^2.4.8      # Removed - code generation not used
+  # mockito: ^5.4.4           # Removed - testing not implemented yet
+  sqflite_common_ffi: ^2.3.5
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon/play_store_512.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon/play_store_512.png"
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
+
+  # Assets
+  assets:
+    - assets/icon/
+    - .env

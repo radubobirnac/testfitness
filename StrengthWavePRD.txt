@@ -1,0 +1,2047 @@
+Product Requirements Document (PRD)
+Technical Design Document (TDD)
+Technology Stack 
+Hypertrophy Essentials
+
+
+
+Product Requirements Document (PRD)
+1. Executive Summary
+StrengthWave is an intelligent fitness application that serves as a personalized strength coach in users' pockets. Using adaptive algorithms and scientific training principles, it creates customized workout programs that adjust based on user performance, equipment availability, and physical limitations. The app delivers the benefits of personalized training at a fraction of the cost of a human personal trainer while providing scientifically-backed programming that exceeds the quality of many in-person trainers.
+The application will launch in two phases: a foundation phase establishing core functionality, and an enhanced intelligence phase that introduces advanced personalization and adaptive features. This phased approach allows for rapid initial deployment while ensuring a robust, data-driven evolution of the product.
+2. Product Vision & Goals
+2.1 Vision Statement
+To democratize access to high-quality strength training by creating an adaptive, intelligent fitness coach that evolves with users, prevents injuries, and delivers optimal results based on scientific training principles.
+2.2 Core Goals
+Replace Personal Trainers: Provide personalized guidance that matches or exceeds the quality of in-person trainers at a fraction of the cost
+Optimize Training: Implement scientific principles including proper volume, progression, and periodization
+Ensure Safety: Accommodate injuries and limitations while preventing new ones through appropriate exercise selection
+Enhance Consistency: Encourage regular training through intelligent programming and simplified workout execution
+Democratize Knowledge: Make advanced training concepts like periodization accessible to all fitness levels
+2.3 Key Differentiators
+Adaptive Intelligence: Workouts that evolve based on user performance, not static programs
+Scientific Foundation: Volume recommendations based on research (Jeff Nippard guidelines) rather than arbitrary programming
+Personalized Periodization: Proper training cycles tailored to experience level (linear, undulating, or block)
+Safety-First Approach: Comprehensive injury accommodation and prevention
+Gender-Specific Focus: Training prioritization based on typical gender preferences while supporting full-body development
+Seamless Offline Experience: Full functionality in gym environments without connectivity
+3. User Personas
+3.1 Beginner User: Alex
+Demographics: 28 years old, office worker, minimal fitness experience
+Goals: Build confidence in the gym, establish consistent routine, learn proper form
+Challenges:
+Intimidated by gym environment and complex equipment
+Unsure what weights to use for different exercises
+Concerned about injury from improper form
+Can't justify $200+ per session for a personal trainer
+Struggles to maintain consistency with workouts
+Needs:
+Clear guidance on exercise execution
+Appropriate weight recommendations
+Simple, approachable workout structure
+Education on basic training principles
+Encouragement and progress tracking
+3.2 Intermediate User: Jordan
+Demographics: 35 years old, has been training inconsistently for 2-3 years
+Goals: Break through plateaus, develop more balanced physique, train more efficiently
+Challenges:
+Sees inconsistent progress from ad-hoc training
+Unsure how to properly implement progressive overload
+Has developed some muscle imbalances
+Has minor recurring injuries that disrupt training
+Cannot afford ongoing personal training
+Needs:
+Structured progression system
+Balance across muscle groups and movement patterns
+Accommodation for minor injuries
+More variety in exercise selection
+Introduction to periodization concepts
+3.3 Advanced User: Morgan
+Demographics: 42 years old, has been training seriously for 5+ years
+Goals: Optimize hypertrophy, implement proper periodization, train around chronic issues
+Challenges:
+Has plateaued with current training approach
+Understands periodization but struggles to implement it effectively
+Has accumulated some overuse injuries
+Finds most apps too basic for their needs
+Wants data-driven approach to training
+Needs:
+Sophisticated periodization implementation
+Intelligent exercise rotation and variation
+Careful balance of volume and intensity
+Detailed progress analytics
+Accommodation for chronic issues
+4. Market Positioning & Value Proposition
+4.1 Problem Statement
+Personal trainers are prohibitively expensive ($100-$200+ per session) and often deliver suboptimal programming based on outdated principles. Generic workout apps offer cookie-cutter programs that don't adapt to user progress, available equipment, or physical limitations. Neither solution properly implements scientific training principles like appropriate volume, progressive overload, and periodization.
+4.2 Value Proposition
+StrengthWave delivers personalized strength coaching that:
+Costs a fraction of personal training while delivering superior programming based on scientific principles
+Adapts to individual capabilities by finding appropriate working weights and progression rates
+Implements proper periodization to optimize results and prevent plateaus
+Accommodates injuries and limitations to ensure safe, continuous progress
+Works seamlessly offline in gym environments with spotty connectivity
+Tracks progress comprehensively to show tangible results and motivate consistency
+4.3 Competitive Positioning
+Competitor Type	Strengths	Weaknesses	StrengthWave Advantage
+Personal Trainers	In-person form correction, accountability	Expensive, inconsistent quality, limited availability	Better programming at fraction of cost, always available
+Generic Fitness Apps	Large exercise libraries, slick interfaces	Static programs, no true personalization, no periodization	Adaptive programming, scientific approach, injury accommodation
+AI Fitness Apps	Some personalization, tracking features	Superficial adaptations, no proper periodization, limited offline support	True periodization, comprehensive adaptation, seamless offline experience
+5. Feature Specifications
+5.1 Intelligent Workout Programming
+5.1.1 Workout Generation Algorithm
+Functionality: Creates personalized workouts based on multiple factors
+Key Inputs:
+User profile (experience, gender, goals)
+Available equipment
+Workout history and performance
+Active injuries or limitations
+Position in periodization cycle
+Available time
+Implementation Details:
+Selects exercises based on weighted scoring system considering:
+Gender relevance (upper body focus for men, lower body focus for women)
+User preference (based on history and explicit feedback)
+Equipment availability (with substitution logic)
+Injury risk (avoiding exercises that stress injured areas)
+Exercise variety (preventing staleness)
+Movement pattern balance (push/pull/hinge/squat)
+Assigns appropriate volume based on Jeff Nippard's guidelines:
+Beginner: Lower range (e.g., 10 weekly sets for chest)
+Intermediate: Middle range (e.g., 10-15 weekly sets for chest)
+Advanced: Upper range (e.g., 15-20 weekly sets for chest)
+Structures workouts with intelligent exercise ordering:
+Compound movements before isolation
+Non-competing supersets where appropriate
+Proper rest intervals based on exercise intensity
+User Experience:
+One-tap workout generation based on user profile
+Option to customize generated workouts
+Ability to save favorite workouts for reuse
+Clear explanation of workout focus and structure
+5.1.2 Working Weight Detection & Progression
+Functionality: Determines appropriate weights and progression for each user and exercise
+Initial Weight Estimation:
+Based on body weight percentages (5-20% depending on exercise)
+Adjusted for gender (different multipliers for upper/lower body)
+Modified by experience level (0.7× for beginners, 1.0× for intermediate, 1.3× for advanced)
+Conservative for beginners (safety factor of 0.8-0.9)
+Rounded to available weight increments (2.5lb/5lb)
+Progression System:
+Progressive overload implementation following scientific principles
+Weight increases after completing target reps for 2 consecutive workouts
+Percentage-based increases (typically 2.5-5%)
+Different progression rates for compound vs. isolation exercises
+Confidence scoring (0-100) to determine reliability of working weights
+Weight reduction after repeated failures to complete target reps
+User Experience:
+Clear weight recommendations for each exercise
+Simple feedback mechanism (too easy/appropriate/too hard)
+Visual indicators of progress over time
+Celebrations for new personal records
+5.1.3 Periodization System
+Functionality: Implements scientifically-backed training cycles to optimize results
+Periodization Models:
+Linear periodization for beginners (simplest implementation)
+Undulating periodization for intermediate/advanced (better for hypertrophy)
+Block periodization for very advanced users (specialized goals)
+Cycle Structure:
+Accumulation phase (higher reps, moderate weights, more volume)
+Intensification phase (lower reps, heavier weights, less volume)
+Deload phase (moderate reps, lighter weights, reduced volume)
+Phase Transitions:
+Time-based triggers (standard 4-week accumulation, 2-week intensification, 1-week deload)
+Performance-based triggers (detecting plateaus)
+User-initiated transitions (managing fatigue)
+User Experience:
+Visual indication of current phase and position in cycle
+Educational content explaining periodization benefits
+Automatic workout adjustments based on current phase
+Option for user to initiate deload when feeling fatigued
+5.2 Injury Accommodation & Safety
+5.2.1 Injury Tracking System
+Functionality: Records and manages user-reported injuries and limitations
+Phase 1 Implementation:
+Text-based selection of body parts and muscles
+Pain level reporting (1-10 scale)
+Notes field for additional context
+Tracking of active vs. resolved issues
+Phase 2 Implementation:
+Interactive SVG body map for intuitive selection
+Two-tiered selection (general area ? specific muscles)
+Support for multiple simultaneous issues
+Visual representation of affected areas
+User Experience:
+Simple injury reporting flow
+Clear management of active issues
+Option to resolve injuries when healed
+History of past injuries for reference
+5.2.2 Workout Modification System
+Functionality: Adapts workouts based on reported injuries and limitations
+Risk Assessment:
+Calculates exercise risk scores based on:
+Primary muscle involvement (high impact)
+Secondary muscle involvement (moderate impact)
+Joint stress (high impact)
+Movement patterns (relevant to specific injuries)
+Applies thresholds for decision making:
+Low risk: Safe to perform normally
+Medium risk: Perform with reduced weight
+High risk: Substitute with safer alternative
+Exercise Substitution Logic:
+Identifies safer alternatives targeting same muscle groups
+Prioritizes exercises with similar training effects
+Adapts to available equipment
+User Experience:
+Transparent explanation for exercise modifications
+Option to override suggestions (with caution warnings)
+Alternative exercise demonstrations
+Gradual reintroduction of exercises as injuries resolve
+5.2.3 Form Guidance
+Phase 1 Implementation:
+Text-based instruction for proper execution
+Common mistake warnings
+Safety tips for each exercise
+Phase 2 Implementation:
+GIF/video demonstrations of proper form
+Multiple angles for complex movements
+Specific form cues during execution
+5.3 User Experience & Interface
+5.3.1 Core Workout Flow
+Functionality: Guides users through workout execution with minimal friction
+Implementation Details:
+One-tap workout initiation
+Clear exercise instructions and demonstrations
+Simple set logging interface
+Automatic rest timer (default 90 seconds, adjustable)
+Set tracking with simple feedback mechanism
+Exercise substitution capability
+Workout summary upon completion
+User Experience:
+Minimalist design focused on essential information
+Minimal taps required during workout
+Clear progress indicators
+Option to log additional notes
+Celebration of workout completion
+5.3.2 Progress Tracking
+Functionality: Visualizes user progress across various metrics
+Implementation Details:
+Weight progression charts for key exercises
+Volume tracking by muscle group
+Workout consistency visualization
+Achievement system for milestones
+Personal record tracking
+User Experience:
+Clear, motivating visualizations
+Multiple time period views (week, month, year)
+Celebration of significant milestones
+Identification of areas needing attention
+5.3.3 Offline Functionality
+Functionality: Ensures seamless usage in gym environments with poor connectivity
+Implementation Details:
+Local storage of upcoming workouts
+Complete offline workout execution
+Background synchronization when connectivity returns
+Conflict resolution for offline changes
+Queue-based sync system for reliability
+User Experience:
+Transparent offline/online transitions
+Sync status indicators
+No functionality loss during offline periods
+Data preservation during connectivity issues
+5.4 Content & Exercise Library
+5.4.1 Exercise Database
+Phase 1 Scope: 50-100 core exercises covering all major muscle groups
+Phase 2 Scope: 300+ exercises with variations and specialized movements
+Exercise Attributes:
+Name and description
+Primary and secondary muscle targets
+Required equipment
+Difficulty level
+Exercise type (compound, isolation)
+Movement pattern
+Form instructions
+Common mistakes
+Tagging System:
+Equipment tags (barbell, dumbbell, cable, machine, bodyweight)
+Exercise property tags (compound, isolation, unilateral, stability)
+Special tags (beginner-friendly, joint-friendly, high-intensity)
+5.4.2 Educational Content
+Functionality: Educates users on training principles and proper execution
+Implementation Details:
+Exercise form descriptions
+Training principle explanations
+Periodization concept guides
+Progressive overload education
+Recovery recommendations
+User Experience:
+Context-sensitive information delivery
+Option to learn more about concepts
+Progressive disclosure of advanced topics
+Clear, concise explanations
+6. Implementation Phases
+6.1 Phase 1: Foundation & Core Experience (12 weeks)
+6.1.1 Core Objectives
+Establish stable, user-friendly experience with essential workout tracking
+Implement basic adaptive features for workout personalization
+Build data collection framework for future intelligence enhancements
+Deliver friction-free workout experience that works offline
+6.1.2 Feature Set
+Feature Area	Phase 1 Scope
+User Management	Account creation, basic profiles, goal selection
+Workout Structure	3-5 pre-built templates, customizable schedules, basic exercise library (50-100 exercises)
+Workout Execution	Guided interface, set/rep logging, rest timer, in-workout adjustments
+Adaptive Intelligence	Basic progressive overload rules, simplified periodization, exercise substitution
+Progress Tracking	Workout history, weight progression charts, basic achievements
+Offline Functionality	Complete offline workout execution, local storage, background sync
+Injury Accommodation	Text-based injury reporting, basic exercise filtering
+6.1.3 Success Criteria
+90%+ workout logging completion rate (sessions started vs. completed)
+<3% crash rate across devices
+70%+ 7-day retention rate among beta users
+80%+ of workouts can be completed offline without issues
+Average app rating of 4+ stars from beta testers
+6.2 Phase 2: Enhanced Intelligence & Personalization 
+6.2.1 Core Objectives
+Leverage user data to implement more sophisticated adaptive algorithms
+Enhance personalization based on individual patterns
+Expand exercise variety and guidance
+Improve progress tracking with deeper insights
+Begin third-party integrations with health platforms
+6.2.2 Feature Set
+Feature Area	Phase 2 Scope
+Advanced Adaptive Intelligence	Pattern-based modifications, multi-variable adjustment, enhanced periodization
+Expanded Personalization	Exercise preference learning, workout customization tools, adaptive scheduling
+Enhanced Progress Tracking	Body measurements, advanced performance analytics, workout insights
+Extended Exercise Library	300+ exercises, video demonstrations, specialized training techniques
+Injury Accommodation	SVG body map interface, sophisticated exercise filtering, optional rehabilitation suggestions
+Basic Integrations	Health platform connections, calendar synchronization
+6.2.3 Success Criteria
+40%+ increase in user retention compared to Phase 1
+50%+ of users engaging with new personalization features
+25%+ increase in workout adherence rates
+35%+ of users connecting third-party health platforms
+Average session duration increase of 15%+
+6.3 Transition Criteria
+The following criteria must be met before moving from Phase 1 to Phase 2:
+Achievement of all Phase 1 success metrics
+Collection of sufficient user data for algorithm refinement
+Stable technical performance with <3% crash rate
+Incorporation of user feedback from Phase 1
+Completion of backend infrastructure for advanced features
+7. Technical Requirements
+7.1 Platform Support
+Mobile Platforms:
+iOS (minimum iOS 13.0)
+Android (minimum API level 26 / Android 8.0)
+Form Factors:
+Primary: Smartphone
+Secondary: Tablet (optimized layouts)
+7.2 Performance Requirements
+Launch Time: <3 seconds on mid-range devices
+UI Responsiveness: <100ms response to user interactions
+Offline Support: 100% of core workout functionality available offline
+Data Usage: <5MB per day with typical usage
+Storage: <100MB app size (excluding cached exercise media)
+Battery Impact: <3% battery per hour during active workout tracking
+7.3 Connectivity Requirements
+Offline Operation:
+Complete workout execution without connectivity
+Local storage of upcoming workouts
+Exercise library available offline
+Sync Requirements:
+Background synchronization when connectivity returns
+Intelligent conflict resolution
+Sync status indicators
+Data preservation during sync failures
+7.4 Security Requirements
+Authentication: Secure email/password with optional social login
+Data Protection: Encryption for sensitive user data
+Privacy Compliance: GDPR and CCPA compliance features
+Data Ownership: Clear user ownership of personal data with export and import options
+7.5 Integration Requirements
+Phase 1:
+None (self-contained application)
+Phase 2:
+Apple Health / Google Fit for activity data
+Calendar integration for workout scheduling
+Cloud backup for user data
+8. Monetization Strategy
+8.1 Business Model
+Subscription Model:
+Free trial (first month)
+Monthly subscription thereafter
+No long-term contracts
+8.2 Pricing Strategy
+Target Price Point: $9.99 - $14.99 per month
+Positioning: Fraction of personal trainer cost ($200+ per session)
+Value Proposition: Superior results through scientific programming
+8.3 Feature Differentiation
+Feature Area	Free Tier	Premium Tier
+Workout Tracking	Basic logging	Full tracking with analytics
+Exercise Library	Limited selection (30-50)	Complete library (100-300+)
+Workout Creation	Manual creation only	AI-powered recommendations
+Progression	Manual weight selection	Intelligent working weight detection
+Periodization	None	Full periodization system
+Analytics	Basic stats	Comprehensive progress tracking
+Offline Support	Limited	Complete
+9. Success Metrics & KPIs
+9.1 User Engagement Metrics
+Retention: 70%+ 7-day, 50%+ 30-day retention
+Workout Frequency: Average 3+ workouts logged per week per active user
+Session Length: Average 45-60 minutes per workout session
+Feature Adoption: 70%+ utilization of core features
+Stickiness: 70%+ of users return within their expected training schedule
+9.2 Technical Performance Metrics
+Stability: <3% crash rate across all devices
+Responsiveness: Average UI response time <100ms
+Sync Success: 95%+ successful synchronizations
+Offline Usage: 80%+ of workouts completable offline
+Load Time: Average app cold start <3 seconds
+9.3 Business Metrics
+Conversion: 20%+ conversion from free trial to paid subscription
+Retention: 80%+ subscription retention after 3 months
+Revenue: $X average revenue per user (ARPU)
+Growth: X% month-over-month user growth
+LTV:CAC Ratio: 3:1 or better (Lifetime Value to Customer Acquisition Cost)
+10. Future Roadmap Considerations
+10.1 Advanced Form Analysis
+Video-based form checking with AI analysis
+Real-time feedback during exercise execution
+Personalized form correction based on user physiology
+10.2 Enhanced Social Features
+Workout partners for accountability
+Achievement sharing capabilities
+Community challenges and leaderboards
+Trainer marketplace for occasional guidance
+10.3 Advanced Analytics
+Predictive modeling for progress forecasting
+Body composition correlation with training
+Recovery optimization recommendations
+Training-lifestyle correlations
+10.4 Wearable Integration
+Heart rate monitoring during workouts
+Recovery status tracking
+Sleep quality correlation with performance
+Automatic workout detection and logging
+11. Approval & Sign-off
+Role	Name	Signature	Date
+Product Owner			
+Technical Lead			
+UX Designer			
+QA Lead			
+
+Document Version: 2.0
+ Last Updated: [DATE]
+
+
+
+
+
+
+Technical Design Document (TDD)
+1. System Architecture
+1.1 High-Level Architecture
+StrengthWave will implement a hybrid client-server architecture with strong offline capabilities:
+???????????????????????????      ????????????????????????      ???????????????????????
+?                         ?      ?                      ?      ?                     ?
+?   Mobile Application    ????????   API Services       ????????   Database Layer    ?
+?   (React Native)        ?      ?   (Supabase)         ?      ?   (PostgreSQL)      ?
+?                         ?      ?                      ?      ?                     ?
+???????????????????????????      ????????????????????????      ???????????????????????
+       ?         ?
+       ?         ?
+       ?         ?
+??????????????? ???????????????
+?             ? ?             ?
+?  Local DB   ? ?  Local Cache?
+? (SQLite)    ? ?  (Assets)   ?
+?             ? ?             ?
+??????????????? ???????????????
+
+1.2 Component Breakdown
+1.2.1 Mobile Application (React Native)
+UI Layer: React Native components with React Native Paper
+State Management: Redux Toolkit with Redux Persist for offline state
+Local Storage: SQLite for workout data, AsyncStorage for user preferences
+Navigation: React Navigation for screen transitions and deep linking
+Networking: Axios for API calls with offline queuing capability
+1.2.2 API Services (Supabase)
+Authentication: JWT-based user authentication
+REST Endpoints: Auto-generated and custom endpoints
+Edge Functions: Serverless functions for workout generation algorithms
+Storage: Media storage for exercise demonstrations
+1.2.3 Database Layer (PostgreSQL via Supabase)
+Relational Data: Structured workout, exercise, and user data
+Indexes: Optimized for common query patterns
+Security: Row-level security policies for data isolation
+1.3 Technical Architecture Decisions
+Component	Selected Technology	Rationale
+Frontend Framework	React Native	Cross-platform support, performance, large ecosystem
+UI Library	React Native Paper	Material Design components, customizable theming
+State Management	Redux Toolkit	Predictable state container, developer tools, middleware support
+Backend Platform	Supabase	PostgreSQL database, built-in authentication, Row-Level Security
+Local Storage	SQLite + AsyncStorage	Structured data queries with SQLite, simple config with AsyncStorage
+Networking	Axios	Interceptors for offline handling, request/response transformations
+2. Database Design
+2.1 Entity Relationship Diagram
+?????????????????     ??????????????????     ??????????????????     ??????????????????
+?  users        ?     ?  user_profiles ?     ?  workouts      ?     ?  workout_logs  ?
+?????????????????     ??????????????????     ??????????????????     ??????????????????
+?  id           ??1????  user_id       ?     ?  id            ??1????  workout_id    ?
+?  auth_id      ?     ?  height        ?     ?  user_id       ?     ?  user_id       ?
+?  email        ?     ?  weight        ?     ?  name          ?     ?  started_at    ?
+?  created_at   ?     ?  gender        ?     ?  description   ?     ?  completed_at  ?
+?  updated_at   ?     ?  experience    ?     ?  is_template   ?     ?  rating        ?
+?????????????????     ?  goal          ?     ?  focus_areas   ?     ?  notes         ?
+                      ?  created_at    ?     ?  created_at    ?     ?  created_at    ?
+                      ?  updated_at    ?     ?  updated_at    ?     ??????????????????
+                      ??????????????????     ??????????????????              ?
+                                ?                     ?                       ?
+                                ?                     ?                       ?
+?????????????????     ??????????????????     ??????????????????     ??????????????????
+?  exercises    ?     ?  injury_logs   ?     ?  workout_      ?     ?  exercise_logs ?
+?????????????????     ??????????????????     ?  exercises     ?     ??????????????????
+?  id           ?     ?  id            ?     ??????????????????     ?  id            ?
+?  name         ?     ?  user_id       ?     ?  id            ?     ?  workout_log_id?
+?  description  ?     ?  body_part     ?     ?  workout_id    ?     ?  exercise_id   ?
+?  instructions ?     ?  pain_level    ?     ?  exercise_id   ?     ?  set_number    ?
+?  media_url    ?     ?  notes         ?     ?  order_index   ?     ?  weight_used   ?
+?  equipment_req?     ?  is_active     ?     ?  sets_target   ?     ?  reps_completed?
+?  created_at   ?     ?  reported_at   ?     ?  reps_target   ?     ?  is_completed  ?
+?  updated_at   ?     ?  resolved_at   ?     ?  weight_target ?     ?  feedback      ?
+?????????????????     ?  created_at    ?     ?  rest_seconds  ?     ?  created_at    ?
+      ?                ??????????????????     ??????????????????     ??????????????????
+      ?                        
+      ?                        
+?????????????????     ??????????????????     ??????????????????
+?  exercise_    ?     ? periodization_ ?     ? working_       ?
+?  muscles      ?     ? cycles         ?     ? weights        ?
+?????????????????     ??????????????????     ??????????????????
+?  exercise_id  ?     ?  id            ?     ?  id            ?
+?  muscle_id    ?     ?  user_id       ?     ?  user_id       ?
+?  is_primary   ?     ?  current_phase ?     ?  exercise_id   ?
+?  intensity    ?     ?  phase_week    ?     ?  weight        ?
+?????????????????     ?  started_at    ?     ?  confidence    ?
+      ?               ?  updated_at    ?     ?  last_tested   ?
+      ?               ??????????????????     ?  created_at    ?
+      ?                                      ?  updated_at    ?
+?????????????????                           ??????????????????
+?  muscles      ?     ??????????????????
+?????????????????     ? exercise_tags  ?
+?  id           ?     ??????????????????
+?  name         ?     ?  exercise_id   ?
+?  body_region  ?     ?  tag_id        ?
+?  parent_id    ?     ??????????????????
+?????????????????             ?
+                             ?
+                     ??????????????????
+                     ?  tags          ?
+                     ??????????????????
+                     ?  id            ?
+                     ?  name          ?
+                     ?  category      ?
+                     ??????????????????
+
+2.2 Key Tables Definition
+2.2.1 Users & Profiles
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  auth_id TEXT UNIQUE NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE user_profiles (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  height NUMERIC,
+  weight NUMERIC,
+  gender TEXT CHECK (gender IN ('male', 'female', 'other', 'prefer_not_to_say')),
+  experience_level TEXT CHECK (experience_level IN ('beginner', 'intermediate', 'advanced')),
+  goal TEXT CHECK (goal IN ('strength', 'hypertrophy', 'endurance', 'general_fitness')),
+  workout_days_per_week INTEGER DEFAULT 3,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+2.2.2 Exercises & Muscles
+CREATE TABLE exercises (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  description TEXT,
+  instructions TEXT,
+  media_url TEXT,
+  equipment_required TEXT[] NOT NULL,
+  difficulty TEXT CHECK (difficulty IN ('beginner', 'intermediate', 'advanced')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE muscles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  body_region TEXT NOT NULL,
+  parent_id UUID REFERENCES muscles(id) NULL
+);
+
+CREATE TABLE exercise_muscles (
+  exercise_id UUID REFERENCES exercises(id) ON DELETE CASCADE,
+  muscle_id UUID REFERENCES muscles(id) ON DELETE CASCADE,
+  is_primary BOOLEAN DEFAULT FALSE,
+  intensity INTEGER CHECK (intensity BETWEEN 1 AND 10),
+  PRIMARY KEY (exercise_id, muscle_id)
+);
+
+CREATE TABLE tags (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL UNIQUE,
+  category TEXT
+);
+
+CREATE TABLE exercise_tags (
+  exercise_id UUID REFERENCES exercises(id) ON DELETE CASCADE,
+  tag_id UUID REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (exercise_id, tag_id)
+);
+
+2.2.3 Workouts & Logging
+CREATE TABLE workouts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_template BOOLEAN DEFAULT FALSE,
+  is_ai_generated BOOLEAN DEFAULT FALSE,
+  focus_areas TEXT[],
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE workout_exercises (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workout_id UUID REFERENCES workouts(id) ON DELETE CASCADE,
+  exercise_id UUID REFERENCES exercises(id) ON DELETE CASCADE,
+  order_index INTEGER NOT NULL,
+  sets_target INTEGER NOT NULL,
+  reps_target INTEGER NOT NULL,
+  weight_target NUMERIC NULL,
+  rest_seconds INTEGER DEFAULT 90
+);
+
+CREATE TABLE workout_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workout_id UUID REFERENCES workouts(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  completed_at TIMESTAMP WITH TIME ZONE NULL,
+  rating INTEGER CHECK (rating BETWEEN 1 AND 10),
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE exercise_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workout_log_id UUID REFERENCES workout_logs(id) ON DELETE CASCADE,
+  exercise_id UUID REFERENCES exercises(id) ON DELETE CASCADE,
+  set_number INTEGER NOT NULL,
+  weight_used NUMERIC NULL,
+  reps_completed INTEGER NULL,
+  is_completed BOOLEAN DEFAULT TRUE,
+  feedback TEXT CHECK (feedback IN ('too_easy', 'appropriate', 'too_hard')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+2.2.4 Training Intelligence
+CREATE TABLE injury_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  body_part TEXT NOT NULL,
+  pain_level INTEGER CHECK (pain_level BETWEEN 1 AND 10),
+  notes TEXT,
+  is_active BOOLEAN DEFAULT TRUE,
+  reported_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  resolved_at TIMESTAMP WITH TIME ZONE NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE periodization_cycles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  current_phase TEXT CHECK (current_phase IN ('accumulation', 'intensification', 'deload')),
+  phase_week INTEGER DEFAULT 1,
+  total_cycle_count INTEGER DEFAULT 0,
+  started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE working_weights (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  exercise_id UUID REFERENCES exercises(id) ON DELETE CASCADE,
+  weight NUMERIC NOT NULL,
+  confidence INTEGER CHECK (confidence BETWEEN 0 AND 100) DEFAULT 50,
+  last_tested TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (user_id, exercise_id)
+);
+
+2.3 Database Optimizations
+-- Indexes for frequent queries
+CREATE INDEX idx_workouts_user_id ON workouts(user_id);
+CREATE INDEX idx_exercise_logs_workout_log_id ON exercise_logs(workout_log_id);
+CREATE INDEX idx_exercise_logs_exercise_id ON exercise_logs(exercise_id);
+CREATE INDEX idx_exercise_muscles_muscle_id ON exercise_muscles(muscle_id);
+CREATE INDEX idx_working_weights_user_exercise ON working_weights(user_id, exercise_id);
+CREATE INDEX idx_injury_logs_user_active ON injury_logs(user_id, is_active) WHERE is_active = TRUE;
+
+-- Materialized view for progression analysis
+CREATE MATERIALIZED VIEW user_exercise_progression AS
+SELECT 
+  user_id, 
+  exercise_id, 
+  date_trunc('week', created_at) as week, 
+  MAX(weight_used) as max_weight,
+  AVG(reps_completed) as avg_reps
+FROM exercise_logs
+JOIN workout_logs ON exercise_logs.workout_log_id = workout_logs.id
+GROUP BY user_id, exercise_id, date_trunc('week', created_at);
+
+3. Algorithm Implementations
+3.1 Working Weight Detection
+The system will use a progressive weight detection algorithm that balances safety with efficiency:
+function calculateInitialWeight(user, exercise) {
+  // Base percentages by exercise type
+  const basePercentages = {
+    'bench_press': 0.5,   // 50% of body weight
+    'squat': 0.6,         // 60% of body weight
+    'deadlift': 0.75,     // 75% of body weight 
+    'overhead_press': 0.3,// 30% of body weight
+    'bicep_curl': 0.15,   // 15% of body weight
+    // Default for other exercises
+    'default': 0.2        // 20% of body weight
+  };
+  
+  // Gender multiplier (for upper/lower body differences)
+  const genderMultiplier = {
+    'male': {
+      'upper_body': 1.0,
+      'lower_body': 1.0
+    },
+    'female': {
+      'upper_body': 0.7,
+      'lower_body': 0.9
+    }
+  };
+  
+  // Experience multiplier
+  const experienceMultiplier = {
+    'beginner': 0.7,
+    'intermediate': 1.0,
+    'advanced': 1.3
+  };
+  
+  // Safety factor
+  const safetyFactor = 0.9;
+  
+  // Get base percentage (default if not specifically defined)
+  const basePercentage = basePercentages[exercise.id] || basePercentages.default;
+  
+  // Determine body region (simplified)
+  const bodyRegion = isPrimaryMuscleUpperBody(exercise) ? 'upper_body' : 'lower_body';
+  
+  // Calculate initial weight
+  let initialWeight = user.weight * basePercentage;
+  initialWeight *= genderMultiplier[user.gender][bodyRegion];
+  initialWeight *= experienceMultiplier[user.experience_level];
+  initialWeight *= safetyFactor;
+  
+  // Round to nearest weight increment (2.5 for small weights, 5 for larger)
+  const increment = initialWeight < 20 ? 2.5 : 5;
+  initialWeight = Math.floor(initialWeight / increment) * increment;
+  
+  return initialWeight;
+}
+
+3.2 Workout Generation Algorithm
+The workout generation will use a modular approach to create personalized workouts:
+async function generateWorkout(userId, availableTime, availableEquipment) {
+  // Step 1: Gather user data
+  const user = await getUserProfile(userId);
+  const workoutHistory = await getRecentWorkouts(userId, 10);
+  const activeInjuries = await getActiveInjuries(userId);
+  const workingWeights = await getWorkingWeights(userId);
+  const periodizationCycle = await getPeriodizationCycle(userId);
+  
+  // Step 2: Determine what to train today based on split and history
+  const muscleGroups = determineTargetMuscleGroups(user, workoutHistory);
+  
+  // Step 3: Select exercises for each muscle group
+  let exercises = [];
+  for (const muscleGroup of muscleGroups) {
+    const muscleExercises = await selectExercisesForMuscleGroup(
+      muscleGroup, 
+      user.experience_level,
+      activeInjuries,
+      availableEquipment,
+      workoutHistory
+    );
+    exercises = [...exercises, ...muscleExercises];
+  }
+  
+  // Step 4: Assign sets, reps, and weights based on periodization
+  exercises = assignSetsAndReps(exercises, periodizationCycle, user.experience_level);
+  exercises = assignWeights(exercises, workingWeights, periodizationCycle);
+  
+  // Step 5: Optimize for available time
+  if (availableTime) {
+    exercises = optimizeForTime(exercises, availableTime);
+  }
+  
+  // Step 6: Create the workout
+  const workout = {
+    user_id: userId,
+    name: generateWorkoutName(muscleGroups),
+    description: generateWorkoutDescription(muscleGroups, periodizationCycle),
+    is_template: false,
+    is_ai_generated: true,
+    focus_areas: muscleGroups,
+    exercises: exercises
+  };
+  
+  return workout;
+}
+
+3.3 Exercise Selection Algorithm
+async function selectExercisesForMuscleGroup(
+  muscleGroup, 
+  experienceLevel, 
+  activeInjuries,
+  availableEquipment,
+  workoutHistory
+) {
+  // Query database for suitable exercises
+  const candidateExercises = await getExercisesForMuscleGroup(
+    muscleGroup, 
+    availableEquipment
+  );
+  
+  // Calculate a score for each exercise
+  const scoredExercises = candidateExercises.map(exercise => {
+    const scores = {
+      // Higher for gender-specific priorities
+      genderRelevance: calculateGenderRelevance(exercise, user.gender),
+      
+      // Higher for exercises the user prefers
+      userPreference: calculateUserPreference(exercise, workoutHistory),
+      
+      // Higher for exercises that haven't been done recently
+      variety: calculateVarietyScore(exercise, workoutHistory),
+      
+      // Lower for exercises that stress injured areas
+      injuryRisk: calculateInjuryRisk(exercise, activeInjuries),
+      
+      // Higher for exercises appropriate to experience level
+      experienceMatch: calculateExperienceMatch(exercise, experienceLevel),
+      
+      // Higher for compound movements for beginners, more isolation for advanced
+      movementType: calculateMovementTypeScore(exercise, experienceLevel)
+    };
+    
+    // Calculate weighted total score
+    const weights = getScoreWeights(experienceLevel);
+    const totalScore = (
+      (scores.genderRelevance * weights.genderRelevance) +
+      (scores.userPreference * weights.userPreference) +
+      (scores.variety * weights.variety) +
+      (scores.experienceMatch * weights.experienceMatch) +
+      (scores.movementType * weights.movementType) -
+      (scores.injuryRisk * weights.injuryRisk)
+    );
+    
+    return {
+      exercise,
+      score: totalScore
+    };
+  });
+  
+  // Sort by score and select top exercises
+  scoredExercises.sort((a, b) => b.score - a.score);
+  
+  // Select appropriate number of exercises based on Jeff Nippard's volume recommendations
+  const exerciseCount = determineExerciseCount(muscleGroup, experienceLevel);
+  return scoredExercises.slice(0, exerciseCount).map(item => item.exercise);
+}
+
+3.4 Periodization Implementation
+async function updatePeriodizationCycle(userId) {
+  const cycle = await getPeriodizationCycle(userId);
+  const user = await getUserProfile(userId);
+  const workoutHistory = await getRecentWorkouts(userId, 10);
+  
+  // Determine if transition is needed
+  let shouldTransition = false;
+  let nextPhase = cycle.current_phase;
+  
+  // Time-based transition check
+  if (
+    (cycle.current_phase === 'accumulation' && cycle.phase_week >= 4) ||
+    (cycle.current_phase === 'intensification' && cycle.phase_week >= 2) ||
+    (cycle.current_phase === 'deload' && cycle.phase_week >= 1)
+  ) {
+    shouldTransition = true;
+  }
+  
+  // Performance-based transition check
+  const performanceMetrics = analyzeRecentPerformance(workoutHistory);
+  if (
+    cycle.current_phase === 'accumulation' && 
+    performanceMetrics.plateaued
+  ) {
+    shouldTransition = true;
+    nextPhase = 'intensification';
+  }
+  
+  // Fatigue-based transition check
+  if (performanceMetrics.fatigueScore > FATIGUE_THRESHOLD) {
+    shouldTransition = true;
+    nextPhase = 'deload';
+  }
+  
+  // Apply transition if needed
+  if (shouldTransition) {
+    if (nextPhase === cycle.current_phase) {
+      // Move to next phase in sequence
+      switch (cycle.current_phase) {
+        case 'accumulation':
+          nextPhase = 'intensification';
+          break;
+        case 'intensification':
+          nextPhase = 'deload';
+          break;
+        case 'deload':
+          nextPhase = 'accumulation';
+          // Increment cycle count when returning to accumulation
+          await incrementCycleCount(userId);
+          break;
+      }
+    }
+    
+    // Update cycle with new phase
+    await updateUserPeriodizationPhase(userId, nextPhase);
+    return { ...cycle, current_phase: nextPhase, phase_week: 1 };
+  } else {
+    // Just increment the week in current phase
+    await incrementPhaseWeek(userId);
+    return { ...cycle, phase_week: cycle.phase_week + 1 };
+  }
+}
+
+3.5 Injury Risk Assessment
+function calculateInjuryRisk(exercise, activeInjuries) {
+  if (!activeInjuries || activeInjuries.length === 0) {
+    return 0; // No risk if no injuries
+  }
+  
+  let totalRisk = 0;
+  
+  // Get muscles involved in this exercise
+  const exerciseMuscles = getExerciseMuscles(exercise.id);
+  
+  // For each active injury, calculate contribution to risk
+  for (const injury of activeInjuries) {
+    // Get affected muscles from injury body part
+    const affectedMuscles = getMusclesInBodyPart(injury.body_part);
+    
+    // Calculate overlap between exercise muscles and affected muscles
+    for (const exerciseMuscle of exerciseMuscles) {
+      for (const affectedMuscle of affectedMuscles) {
+        if (exerciseMuscle.muscle_id === affectedMuscle.id) {
+          // Primary muscles have higher risk
+          const primaryFactor = exerciseMuscle.is_primary ? 1.0 : 0.6;
+          
+          // Calculate risk contribution
+          const riskContribution = 
+            injury.pain_level * 
+            exerciseMuscle.intensity * 
+            primaryFactor;
+            
+          totalRisk += riskContribution;
+        }
+      }
+    }
+    
+    // Check for joint stress
+    const jointStress = calculateJointStress(exercise, injury.body_part);
+    totalRisk += jointStress * injury.pain_level * 1.2;
+  }
+  
+  return totalRisk;
+}
+
+4. API Structure
+4.1 Authentication Endpoints
+POST /auth/signup
+- Register new user
+- Body: { email, password, profile_data }
+- Returns: { user, token }
+
+POST /auth/login
+- Authenticate user
+- Body: { email, password }
+- Returns: { user, token }
+
+POST /auth/refresh-token
+- Refresh expired JWT token
+- Headers: { Authorization: Bearer refresh_token }
+- Returns: { token }
+
+4.2 User Management Endpoints
+GET /users/profile
+- Get user profile information
+- Headers: { Authorization: Bearer token }
+- Returns: { profile }
+
+PUT /users/profile
+- Update user profile information
+- Headers: { Authorization: Bearer token }
+- Body: { profile_data }
+- Returns: { profile }
+
+POST /users/injuries
+- Log a new injury
+- Headers: { Authorization: Bearer token }
+- Body: { body_part, pain_level, notes }
+- Returns: { injury }
+
+GET /users/injuries
+- Get user's injury history
+- Headers: { Authorization: Bearer token }
+- Query: { active_only: boolean }
+- Returns: { injuries[] }
+
+4.3 Workout Management Endpoints
+POST /workouts/generate
+- Generate a new workout based on user profile
+- Headers: { Authorization: Bearer token }
+- Body: { available_time, available_equipment }
+- Returns: { workout }
+
+GET /workouts
+- Get user's workouts
+- Headers: { Authorization: Bearer token }
+- Query: { limit, offset, templates_only }
+- Returns: { workouts[] }
+
+GET /workouts/:id
+- Get specific workout
+- Headers: { Authorization: Bearer token }
+- Returns: { workout }
+
+POST /workouts/log/start
+- Start a workout session
+- Headers: { Authorization: Bearer token }
+- Body: { workout_id }
+- Returns: { workout_log }
+
+POST /workouts/log/complete
+- Complete a workout session
+- Headers: { Authorization: Bearer token }
+- Body: { workout_log_id, rating, notes }
+- Returns: { workout_log }
+
+4.4 Exercise Logging Endpoints
+POST /exercises/log
+- Log a completed exercise set
+- Headers: { Authorization: Bearer token }
+- Body: { workout_log_id, exercise_id, set_number, weight_used, reps_completed, feedback }
+- Returns: { exercise_log }
+
+GET /exercises/history/:exercise_id
+- Get history for specific exercise
+- Headers: { Authorization: Bearer token }
+- Query: { limit, offset }
+- Returns: { logs[] }
+
+GET /exercises/library
+- Get exercise library
+- Headers: { Authorization: Bearer token }
+- Query: { muscle_group, equipment, limit, offset }
+- Returns: { exercises[] }
+
+4.5 Progress Tracking Endpoints
+GET /progress/overview
+- Get overall progress metrics
+- Headers: { Authorization: Bearer token }
+- Query: { period: "week"|"month"|"year" }
+- Returns: { metrics }
+
+GET /progress/exercise/:exercise_id
+- Get progress for specific exercise
+- Headers: { Authorization: Bearer token }
+- Query: { period: "week"|"month"|"year" }
+- Returns: { progress_data }
+
+GET /progress/body-part/:body_part
+- Get progress for specific body part
+- Headers: { Authorization: Bearer token }
+- Query: { period: "week"|"month"|"year" }
+- Returns: { progress_data }
+
+5. Frontend Components
+5.1 Screen Architecture
+App
+??? Auth
+?   ??? Login
+?   ??? Register
+?   ??? ForgotPassword
+??? Onboarding
+?   ??? ProfileSetup
+?   ??? ExperienceLevel
+?   ??? Goals
+??? Main (TabNavigator)
+?   ??? Home
+?   ?   ??? Dashboard
+?   ?   ??? UpcomingWorkouts
+?   ?   ??? QuickActions
+?   ??? Workouts
+?   ?   ??? WorkoutList
+?   ?   ??? WorkoutDetail
+?   ?   ??? WorkoutExecution
+?   ??? Exercises
+?   ?   ??? ExerciseLibrary
+?   ?   ??? ExerciseDetail
+?   ??? Progress
+?   ?   ??? ProgressOverview
+?   ?   ??? ExerciseProgress
+?   ??? Profile
+?       ??? UserProfile
+?       ??? BodyMap
+?       ??? Settings
+
+5.2 Key Component Specifications
+5.2.1 WorkoutExecution Component
+This is the core component used during active workouts:
+const WorkoutExecution = ({ workout, onComplete }) => {
+  const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
+  const [setLogs, setSetLogs] = useState([]);
+  const [restTimer, setRestTimer] = useState(0);
+  const [isResting, setIsResting] = useState(false);
+  
+  const currentExercise = workout.exercises[currentExerciseIndex];
+  
+  // Handle set completion
+  const completeSet = (weight, reps, feedback) => {
+    // Log the completed set
+    const newLog = {
+      exercise_id: currentExercise.exercise_id,
+      set_number: setLogs.filter(log => log.exercise_id === currentExercise.exercise_id).length + 1,
+      weight_used: weight,
+      reps_completed: reps,
+      feedback
+    };
+    setSetLogs([...setLogs, newLog]);
+    
+    // Check if exercise is complete
+    if (newLog.set_number >= currentExercise.sets_target) {
+      // Move to next exercise if available
+      if (currentExerciseIndex < workout.exercises.length - 1) {
+        setCurrentExerciseIndex(currentExerciseIndex + 1);
+      } else {
+        // Workout complete
+        onComplete(setLogs);
+      }
+    } else {
+      // Start rest timer for next set
+      startRestTimer(currentExercise.rest_seconds);
+    }
+  };
+  
+  // Substitute exercise
+  const substituteExercise = async () => {
+    // Request a substitute exercise from the API
+    const substitute = await getSubstituteExercise(
+      currentExercise.exercise_id, 
+      workout.user_id
+    );
+    
+    // Replace the current exercise
+    const updatedExercises = [...workout.exercises];
+    updatedExercises[currentExerciseIndex] = substitute;
+    
+    // Update the workout
+    onWorkoutUpdate({
+      ...workout,
+      exercises: updatedExercises
+    });
+  };
+  
+  return (
+    <View style={styles.container}>
+      {/* Exercise information */}
+      <ExerciseCard 
+        exercise={currentExercise}
+        onSubstitute={substituteExercise}
+      />
+      
+      {/* Rest timer (shown during rest) */}
+      {isResting ? (
+        <RestTimer 
+          seconds={restTimer}
+          onComplete={() => setIsResting(false)}
+        />
+      ) : (
+        /* Set logging interface (shown during active set) */
+        <SetLogger
+          exercise={currentExercise}
+          setNumber={setLogs.filter(log => log.exercise_id === currentExercise.exercise_id).length + 1}
+          previousWeight={getPreviousWeight(setLogs, currentExercise.exercise_id)}
+          targetReps={currentExercise.reps_target}
+          onComplete={completeSet}
+        />
+      )}
+      
+      {/* Progress indicator */}
+      <WorkoutProgress 
+        currentExerciseIndex={currentExerciseIndex}
+        totalExercises={workout.exercises.length}
+        completedSets={setLogs.length}
+        totalSets={calculateTotalSets(workout.exercises)}
+      />
+    </View>
+  );
+};
+
+5.2.2 BodyMap Component
+For injury tracking in Phase 2:
+const BodyMap = ({ onSelectBodyPart }) => {
+  const [view, setView] = useState('front'); // 'front' or 'back'
+  const [selectedRegion, setSelectedRegion] = useState(null);
+  
+  // Handle initial region selection
+  const handleRegionSelect = (region) => {
+    setSelectedRegion(region);
+  };
+  
+  // Handle specific muscle selection
+  const handleMuscleSelect = (muscle) => {
+    onSelectBodyPart(muscle);
+    setSelectedRegion(null); // Reset for next selection
+  };
+  
+  return (
+    <View style={styles.container}>
+      {/* View toggle */}
+      <View style={styles.toggleContainer}>
+        <TouchableOpacity 
+          onPress={() => setView('front')}
+          style={[styles.toggleButton, view === 'front' && styles.activeToggle]}
+        >
+          <Text>Front View</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          onPress={() => setView('back')}
+          style={[styles.toggleButton, view === 'back' && styles.activeToggle]}
+        >
+          <Text>Back View</Text>
+        </TouchableOpacity>
+      </View>
+      
+      {/* Body map */}
+      {selectedRegion ? (
+        // Zoomed view of selected region
+        <RegionDetail
+          region={selectedRegion}
+          onSelectMuscle={handleMuscleSelect}
+          onBack={() => setSelectedRegion(null)}
+        />
+      ) : (
+        // Full body view with clickable regions
+        <BodySvg
+          view={view}
+          onSelectRegion={handleRegionSelect}
+        />
+      )}
+      
+      {/* Alternative text selection */}
+      <Text style={styles.orText}>Or select from list:</Text>
+      <MuscleList onSelectMuscle={handleMuscleSelect} />
+    </View>
+  );
+};
+
+5.3 State Management Structure
+Redux slice for workout management:
+const workoutsSlice = createSlice({
+  name: 'workouts',
+  initialState: {
+    current: null,
+    upcoming: [],
+    history: [],
+    loading: false,
+    error: null,
+    activeLog: null
+  },
+  reducers: {
+    setCurrentWorkout: (state, action) => {
+      state.current = action.payload;
+    },
+    setUpcomingWorkouts: (state, action) => {
+      state.upcoming = action.payload;
+    },
+    addWorkoutToHistory: (state, action) => {
+      state.history.unshift(action.payload);
+    },
+    startWorkoutLog: (state, action) => {
+      state.activeLog = {
+        workout_id: action.payload.id,
+        started_at: new Date().toISOString(),
+        exercise_logs: []
+      };
+    },
+    logExerciseSet: (state, action) => {
+      state.activeLog.exercise_logs.push(action.payload);
+    },
+    completeWorkoutLog: (state, action) => {
+      state.activeLog.completed_at = new Date().toISOString();
+      state.activeLog.rating = action.payload.rating;
+      state.activeLog.notes = action.payload.notes;
+      // Move to history and clear active log
+      state.history.unshift(state.activeLog);
+      state.activeLog = null;
+    }
+  },
+  extraReducers: (builder) => {
+    // Handle async actions
+    builder
+      .addCase(fetchWorkouts.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(fetchWorkouts.fulfilled, (state, action) => {
+        state.loading = false;
+        state.upcoming = action.payload.upcoming;
+        state.history = action.payload.history;
+      })
+      .addCase(fetchWorkouts.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.error.message;
+      });
+  }
+});
+
+6. Offline Functionality
+6.1 Local Storage Schema
+SQLite schema for local storage:
+-- Workout data
+CREATE TABLE local_workouts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  data TEXT NOT NULL, -- JSON string of workout data
+  is_synced INTEGER DEFAULT 0,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+-- Workout logs
+CREATE TABLE local_workout_logs (
+  id TEXT PRIMARY KEY,
+  workout_id TEXT NOT NULL,
+  data TEXT NOT NULL, -- JSON string of log data
+  is_synced INTEGER DEFAULT 0,
+  created_at TEXT
+);
+
+-- Exercise logs
+CREATE TABLE local_exercise_logs (
+  id TEXT PRIMARY KEY,
+  workout_log_id TEXT NOT NULL,
+  data TEXT NOT NULL, -- JSON string of log data
+  is_synced INTEGER DEFAULT 0,
+  created_at TEXT
+);
+
+-- Sync queue
+CREATE TABLE sync_queue (
+  id TEXT PRIMARY KEY,
+  endpoint TEXT NOT NULL,
+  method TEXT NOT NULL,
+  payload TEXT,
+  attempt_count INTEGER DEFAULT 0,
+  created_at TEXT
+);
+
+6.2 Sync Service
+class SyncService {
+  // Queue an API call for later execution
+  async queueSync(endpoint, method, payload) {
+    const id = uuid.v4();
+    await db.execute(
+      'INSERT INTO sync_queue (id, endpoint, method, payload, created_at) VALUES (?, ?, ?, ?, ?)',
+      [id, endpoint, method, JSON.stringify(payload), new Date().toISOString()]
+    );
+    
+    // Try to sync immediately if online
+    if (await this.isOnline()) {
+      this.processSyncQueue();
+    }
+  }
+  
+  // Process all pending sync items
+  async processSyncQueue() {
+    // Get all pending items
+    const queue = await db.query('SELECT * FROM sync_queue ORDER BY created_at ASC');
+    
+    for (const item of queue) {
+      try {
+        // Execute the API call
+        await api.request({
+          url: item.endpoint,
+          method: item.method,
+          data: JSON.parse(item.payload)
+        });
+        
+        // Remove from queue on success
+        await db.execute('DELETE FROM sync_queue WHERE id = ?', [item.id]);
+        
+        // Update local data as synced
+        if (item.endpoint.includes('workout_logs')) {
+          await db.execute(
+            'UPDATE local_workout_logs SET is_synced = 1 WHERE id = ?',
+            [JSON.parse(item.payload).id]
+          );
+        } else if (item.endpoint.includes('exercise_logs')) {
+          await db.execute(
+            'UPDATE local_exercise_logs SET is_synced = 1 WHERE id = ?',
+            [JSON.parse(item.payload).id]
+          );
+        }
+      } catch (error) {
+        // Increment attempt count
+        await db.execute(
+          'UPDATE sync_queue SET attempt_count = attempt_count + 1 WHERE id = ?',
+          [item.id]
+        );
+        
+        // If too many attempts, flag for manual resolution
+        if (item.attempt_count >= 5) {
+          await db.execute(
+            'UPDATE sync_queue SET needs_resolution = 1 WHERE id = ?',
+            [item.id]
+          );
+        }
+      }
+    }
+  }
+  
+  // Listen for online status changes
+  setupListeners() {
+    NetInfo.addEventListener(state => {
+      if (state.isConnected) {
+        this.processSyncQueue();
+      }
+    });
+  }
+}
+
+7. Security Implementation
+7.1 Authentication Flow
+// JWT Authentication with secure storage
+const login = async (email, password) => {
+  try {
+    // Authenticate with Supabase
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+    
+    if (error) throw error;
+    
+    // Store tokens securely
+    await secureStorage.setItem('access_token', data.session.access_token);
+    await secureStorage.setItem('refresh_token', data.session.refresh_token);
+    
+    // Set up automatic token refresh
+    setupTokenRefresh(data.session.expires_at);
+    
+    return data.user;
+  } catch (error) {
+    console.error('Login error:', error);
+    throw error;
+  }
+};
+
+// Token refresh mechanism
+const setupTokenRefresh = (expiresAt) => {
+  const expiryTime = new Date(expiresAt).getTime();
+  const currentTime = new Date().getTime();
+  
+  // Schedule refresh for 5 minutes before expiration
+  const timeToRefresh = expiryTime - currentTime - (5 * 60 * 1000);
+  
+  setTimeout(async () => {
+    const refreshToken = await secureStorage.getItem('refresh_token');
+    
+    if (refreshToken) {
+      try {
+        const { data, error } = await supabase.auth.refreshSession({
+          refresh_token: refreshToken
+        });
+        
+        if (error) throw error;
+        
+        // Update stored tokens
+        await secureStorage.setItem('access_token', data.session.access_token);
+        await secureStorage.setItem('refresh_token', data.session.refresh_token);
+        
+        // Set up next refresh
+        setupTokenRefresh(data.session.expires_at);
+      } catch (error) {
+        console.error('Token refresh error:', error);
+        // Force re-login if refresh fails
+        logoutAndRedirect();
+      }
+    }
+  }, timeToRefresh);
+};
+
+7.2 Data Encryption
+// Encrypt sensitive data before storing locally
+const encryptData = (data) => {
+  // Generate a secure key for this data item
+  const key = CryptoJS.lib.WordArray.random(16).toString();
+  
+  // Encrypt the data
+  const encrypted = CryptoJS.AES.encrypt(JSON.stringify(data), key).toString();
+  
+  // Store the key securely
+  secureStorage.setItem(`key_${data.id}`, key);
+  
+  return encrypted;
+};
+
+// Decrypt data when retrieved
+const decryptData = async (encryptedData, dataId) => {
+  // Retrieve the key
+  const key = await secureStorage.getItem(`key_${dataId}`);
+  
+  if (!key) {
+    throw new Error('Encryption key not found');
+  }
+  
+  // Decrypt the data
+  const decrypted = CryptoJS.AES.decrypt(encryptedData, key).toString(CryptoJS.enc.Utf8);
+  
+  return JSON.parse(decrypted);
+};
+
+8. Performance Optimization
+8.1 Image Caching Strategy
+// Setup image caching for exercise media
+const setupImageCaching = async () => {
+  // Configure the cache
+  ImageCacheManager.config({
+    // Maximum cache size (100MB)
+    cacheSizeLimit: 100 * 1024 * 1024,
+    // Cache exercise images for up to 30 days
+    ttl: 30 * 24 * 60 * 60,
+    // Store in persisted storage
+    storageBackend: AsyncStorage
+  });
+  
+  // Prefetch common exercise images
+  const commonExercises = await api.getCommonExercises();
+  const imageUrls = commonExercises.map(exercise => exercise.media_url);
+  
+  ImageCacheManager.prefetchImages(imageUrls)
+    .then(() => console.log('Exercise images prefetched'))
+    .catch(error => console.error('Image prefetch error:', error));
+};
+
+8.2 Query Optimization
+// Efficient data loading with pagination and prefetching
+const WorkoutHistory = () => {
+  const [workouts, setWorkouts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  
+  // Load initial workouts
+  useEffect(() => {
+    loadWorkouts(1);
+  }, []);
+  
+  // Load workouts with pagination
+  const loadWorkouts = async (pageNum) => {
+    if (loading) return;
+    
+    setLoading(true);
+    try {
+      // Fetch data with pagination
+      const data = await api.getWorkoutHistory({
+        page: pageNum,
+        limit: 10
+      });
+      
+      if (pageNum === 1) {
+        setWorkouts(data.workouts);
+      } else {
+        setWorkouts([...workouts, ...data.workouts]);
+      }
+      
+      setHasMore(data.has_more);
+      setPage(pageNum);
+      
+      // Prefetch next page if available
+      if (data.has_more) {
+        api.prefetchWorkoutHistory({
+          page: pageNum + 1,
+          limit: 10
+        });
+      }
+    } catch (error) {
+      console.error('Error loading workouts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Load more when user reaches the end
+  const handleLoadMore = () => {
+    if (hasMore && !loading) {
+      loadWorkouts(page + 1);
+    }
+  };
+  
+  return (
+    <FlatList
+      data={workouts}
+      renderItem={renderWorkout}
+      keyExtractor={item => item.id}
+      onEndReached={handleLoadMore}
+      onEndReachedThreshold={0.5}
+      ListFooterComponent={loading ? <ActivityIndicator /> : null}
+    />
+  );
+};
+
+9. Implementation Timeline
+9.1 Phase 1: Core Functionality (3 weeks)
+Week	Focus Area	Tasks
+1-2	Project Setup	- Initialize React Native project<br>- Set up Supabase connection<br>- Implement authentication<br>- Create project structure
+3-4	Database Structure	- Implement user and profile models<br>- Create exercise library<br>- Set up workout structure<br>- Design logging system
+5-7	Basic UI	- Implement main navigation<br>- Create workout execution screen<br>- Design exercise selection interface<br>- Build profile screens
+8-9	Core Algorithms	- Implement basic working weight detection<br>- Create simple workout generator<br>- Design progression rules
+10-11	Offline Support	- Implement local storage<br>- Create sync system<br>- Build offline workout execution
+12	Testing & Refinement	- End-to-end testing<br>- Performance optimization<br>- Bug fixes<br>- Prepare for beta release
+9.2 Phase 2: Advanced Features 
+Week	Focus Area	Tasks
+1-3	Enhanced Intelligence	- Implement advanced workout generation<br>- Create detailed working weight algorithm<br>- Build periodization system
+4-6	Injury Accommodation	- Create body part selection interface<br>- Implement injury risk assessment<br>- Design exercise substitution system
+7-9	Personalization	- Build user preference tracking<br>- Implement adaptive workouts<br>- Create feedback analysis system
+10-11	Progress Visualization	- Design progress charts<br>- Implement achievement system<br>- Create analysis dashboard
+12-13	External Integration	- Implement health platform connections<br>- Build data export system<br>- Create backup/restore functionality
+14	Final Testing	- Full platform testing<br>- Performance profiling<br>- Launch preparation
+10. Future Considerations
+10.1 Post-Launch Features
+Video-based form analysis
+Social and community features
+Wearable device integration
+Advanced nutrition tracking
+Voice commands during workouts
+10.2 Scaling Considerations
+Database sharding for large user base
+CDN for media content delivery
+Regional API deployments
+Structured caching layer
+10.3 Monitoring and Analytics
+Implement Sentry for error tracking
+Set up Firebase Analytics for user behavior
+Create admin dashboard for key metrics
+Build A/B testing framework for feature optimization
+
+Approval and Sign-off
+This Technical Design Document represents the agreed-upon approach for implementing the StrengthWave Fitness App.
+Prepared by: [Development Team]
+ Approved by: [Product Owner]
+ Date: [Approval Date]
+
+
+
+
+
+
+
+
+
+
+
+
+Complete Technology Stack Specification
+1. Frontend Technology
+1.1 Core Framework
+React Native: v0.72.x or latest stable
+Cross-platform development for iOS and Android
+Expo managed workflow for faster development cycle
+Expo SDK 49+ for access to latest features
+1.2 UI Framework and Components
+UI Kit: React Native Paper v5.x
+Material Design components
+Consistent UI experience
+Theming support
+Navigation: React Navigation v6.x
+Stack, Tab, and Drawer navigation
+Deep linking support
+Type-safe navigation with TypeScript
+Animation: React Native Reanimated v3.x
+Fluid UI animations
+Gesture handling
+Performance optimized animations
+1.3 State Management
+Global State: Redux Toolkit v1.9.x
+Centralized state management
+Redux Persist for offline state persistence
+RTK Query for API data fetching and caching
+Local State: React Hooks
+Component-level state with useState
+Side effects with useEffect
+Context API for theme and auth state
+1.4 Data Visualization
+Charts: Victory Native v36.x
+Performance-optimized charts for mobile
+Weight progression visualization
+Volume tracking
+Custom interactive charts
+SVG Support: React Native SVG v13.x
+Body map visualization
+Custom graphics
+Lightweight vector icons
+1.5 Form Handling
+Form Management: React Hook Form v7.x
+Performance-focused form handling
+Validation with Yup or Zod
+Field arrays for dynamic forms
+1.6 Offline Capabilities
+Storage: AsyncStorage or MMKV
+Efficient key-value storage
+Encrypted storage for sensitive data
+Sync Engine: Custom implementation with Queue
+Background synchronization
+Conflict resolution
+Retry mechanisms
+1.7 Development Tools
+Language: TypeScript v5.x
+Static type checking
+Enhanced IDE support
+Code quality improvements
+Linting & Formatting:
+ESLint with React Native config
+Prettier for consistent formatting
+Husky for pre-commit hooks
+2. Backend Technology
+2.1 Backend Platform
+Supabase: Latest stable version
+PostgreSQL database
+Authentication system
+Storage for images/assets
+Realtime subscriptions
+Row-level security
+2.2 Server Functions
+Edge Functions: Supabase Edge Functions
+AI workout generation logic
+Complex business rules
+Third-party integrations
+Database Functions: PostgreSQL stored procedures
+Performance-critical operations
+Data aggregation
+Complex queries
+2.3 Authentication
+Auth Provider: Supabase Auth
+Email/password authentication
+Social providers (Google, Apple)
+Magic link authentication
+JWT token management
+2.4 File Storage
+Media Storage: Supabase Storage
+Exercise demonstration media
+User profile images
+Progress photos
+Optimized for mobile delivery
+2.5 API Architecture
+REST API: Supabase Auto-generated REST API
+CRUD operations
+Custom endpoints
+Swagger/OpenAPI documentation
+Realtime: Supabase Realtime
+Workout synchronization
+Collaborative features (future)
+3. Database Technology
+3.1 Primary Database
+PostgreSQL: v15.x (via Supabase)
+Relational database
+Advanced querying capabilities
+JSON support for flexible data
+Full-text search
+3.2 Database Design
+Schema Design: Normalized with strategic denormalization
+Referential integrity
+Performance-optimized for common queries
+Indexing Strategy:
+B-tree indexes for equality/range queries
+GIN indexes for array searches
+Partial indexes for filtered queries
+3.3 Data Migration
+Migration Tool: Supabase Migrations
+Version-controlled schema
+Automated migration scripts
+Rollback capability
+4. DevOps & Infrastructure
+4.1 Source Control
+Repository: GitHub or GitLab
+Feature branch workflow
+Pull/Merge request reviews
+Protected main branch
+4.2 CI/CD Pipeline
+Build Automation: GitHub Actions or GitLab CI
+Automated testing
+Build verification
+Deployment automation
+Mobile Deployment:
+Fastlane for iOS and Android deployment
+CodePush for OTA updates (future)
+4.3 Environment Management
+Environment Strategy:
+Development
+Staging
+Production
+Feature environments (optional)
+Configuration Management:
+Environment variables
+Feature flags
+Remote config
+4.4 Monitoring
+Application Monitoring: Sentry
+Error tracking
+Performance monitoring
+User impact analysis
+Analytics: Amplitude or Firebase Analytics
+User behavior tracking
+Conversion funnels
+Retention analysis
+5. Testing Framework
+5.1 Unit Testing
+Testing Framework: Jest
+Component tests
+Business logic tests
+Mock capabilities
+Coverage Targets:
+80% for critical business logic
+70% for UI components
+5.2 Integration Testing
+API Testing: Supertest
+Endpoint verification
+Response validation
+Service Testing: Custom integration tests
+Cross-service functionality
+5.3 E2E Testing
+Mobile E2E: Detox
+User flow validation
+Cross-platform testing
+Automation on CI
+5.4 Performance Testing
+Load Testing: k6
+API endpoint performance
+Concurrency handling
+Mobile Performance:
+Memory usage profiling
+Render performance
+Battery consumption
+6. Security Framework
+6.1 Authentication Security
+Auth Mechanisms:
+JWT with appropriate expiration
+Refresh token rotation
+Secure storage of credentials
+Authorization:
+Row-level security in Supabase
+Role-based permissions
+6.2 Data Security
+Encryption:
+TLS for all communications
+At-rest encryption for sensitive data
+End-to-end encryption for PII
+Compliance:
+GDPR compliance features
+CCPA compliance features
+Health data protection measures
+6.3 Vulnerability Management
+Dependency Scanning: Dependabot or similar
+Automated vulnerability detection
+Regular dependency updates
+Code Scanning:
+Static analysis tools
+Security-focused code reviews
+7. Third-Party Integrations
+7.1 Analytics & Tracking
+User Analytics: Amplitude or Firebase Analytics
+User journey tracking
+Feature usage analysis
+Conversion monitoring
+Performance Monitoring: Firebase Performance
+Network request timing
+Screen render timing
+App start time tracking
+7.2 Health Platforms
+Apple HealthKit: Integration for iOS
+Activity data import/export
+Workout sharing
+Google Fit: Integration for Android
+Fitness data synchronization
+Step count and activity level
+7.3 Notification Services
+Push Notifications: Firebase Cloud Messaging
+Workout reminders
+Achievement notifications
+Re-engagement campaigns
+In-App Messaging: Custom implementation
+Contextual guidance
+Feature announcements
+7.4 Payment Processing
+Subscription Management: RevenueCat
+Cross-platform subscriptions
+Receipt validation
+Subscription analytics
+Promo code support
+8. AI & Machine Learning
+8.1 Core AI Capabilities
+Workout Generation: Custom algorithms
+Rule-based exercise selection
+Adaptation based on user feedback
+Periodization cycles
+Progression Analysis:
+Pattern recognition for plateaus
+Working weight detection
+Fatigue analysis
+8.2 Implementation Approach
+Algorithm Location:
+Core logic in Edge Functions
+Simple rules in client for offline support
+Data Processing:
+PostgreSQL for data aggregation
+Custom analysis functions
+8.3 Future ML Potential
+Exercise Form Analysis:
+TensorFlow Lite for on-device processing
+Pose estimation models
+User Behavior Prediction:
+Attendance prediction
+Workout preference learning
+9. Accessibility & Internationalization
+9.1 Accessibility
+Screen Reader Support:
+React Native Accessibility API
+WCAG 2.1 AA compliance targets
+UI Considerations:
+Color contrast requirements
+Touch target sizing
+Reduced motion options
+9.2 Internationalization
+Translation Framework: i18next
+Multi-language support
+Right-to-left language compatibility
+Pluralization rules
+Number & Date Formatting: Intl API
+Locale-specific formatting
+Unit conversions (kg/lb)
+12h/24h time format
+10. Development Tooling
+10.1 IDE & Editor Setup
+Recommended IDE: VS Code
+Extensions for React Native
+TypeScript integration
+Debugging configurations
+Collaboration Tools:
+LiveShare for pair programming
+Collaborative debugging
+10.2 Documentation
+API Documentation:
+OpenAPI/Swagger for backend
+JSDoc for frontend utilities
+Knowledge Base:
+Technical wiki (Notion or similar)
+Architecture decision records
+10.3 Project Management
+Task Tracking: Jira or GitHub Projects
+Agile methodology support
+Sprint planning tools
+Bug tracking
+11. Deployment Targets
+11.1 Mobile Platforms
+iOS: Minimum iOS 13.0
+iPhone compatibility
+iPad optimization (future)
+Android: Minimum API level 26 (Android 8.0)
+Device compatibility testing
+Adaptation for different screen sizes
+11.2 App Stores
+App Store: Apple App Store
+In-app purchase integration
+App review guidelines compliance
+Play Store: Google Play Store
+Play Billing integration
+Play Console metrics
+11.3 Distribution Channels
+Beta Testing:
+TestFlight for iOS
+Google Play Beta Testing
+Internal testing tracks
+Production Rollout:
+Phased rollout strategy
+Feature flags for gradual release
+
+
+
+
+Hypertrophy Essentials (Ordered by Importance)
+Consistent and Adequate Sleep
+7–9 hours nightly, focusing on sleep quality.
+
+Proper Nutrition
+0.8–1g protein per lb of body weight daily.
+Slight caloric surplus (~250 calories above maintenance per day) to support muscle growth
+
+Structured Gym Training Program
+Training frequency: hitting each muscle group 2x/week (2 body parts/day, 3–4 days/week).
+Progressive overload (gradually increasing weight, reps, or total volume).
+Strict technique emphasizing safety and muscle activation.
+
+Training Volume & Intensity
+10–20 total weekly sets per muscle group.
+Majority of working sets close to muscular failure (within 1–3 reps of failure).
+
+Exercise Selection & Variation
+Compound movements as a foundation (squats, deadlifts, bench press, overhead press).
+Isolation movements as needed to support weak areas or imbalances.
+Regular exercise rotation every 4–8 weeks to prevent stagnation.
+
+Periodization & Planned De-load Weeks
+Structured variation of training volume/intensity over weeks or months.
+Regular de-load weeks (every 6–10 weeks) to support long-term recovery and avoid injury.
+
+Mind-Muscle Connection and Rep Tempo
+Controlled eccentrics (slower lowering of weight) and purposeful contractions.
+Prioritizing muscle activation over sheer weight lifted.
+
+Hydration & Electrolyte Balance
+Maintaining proper fluid and electrolyte intake (especially sodium, potassium, magnesium).
+
+Stress Management
+Techniques (meditation, yoga, breathwork, relaxation strategies) to lower cortisol and enhance recovery.
+
+Supplementation (Optional but Helpful)
+Creatine monohydrate (3–5g daily).
+
+Consistency and Patience
+
+Long-term commitment to the above factors; progress measured over months/years, not weeks.

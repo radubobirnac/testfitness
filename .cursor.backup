@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "name": "Task Management System",
+      "description": "Always refer to task.md to track completed and pending tasks, and update it as tasks are completed",
+      "instructions": "1. Before implementing any new feature, refer to task.md to understand the overall implementation plan. \n2. Check which tasks are completed [x] and which are pending [ ]. \n3. When a task is completed, update task.md by marking the task as completed [x]. \n4. If a new task is identified that isn't in task.md, add it to the appropriate section. \n5. Always consider dependencies between tasks, and implement them in a logical order."
+    }
+  ]
+} 
