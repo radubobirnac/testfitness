@@ -4,17 +4,53 @@ import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/utils/exercise_metadata.dart';
 
-/// Bottom sheet widget for selecting an exercise
-/// Returns the selected Exercise when popped
+/// Bottom sheet widget for selecting exercises.
+///
+/// By default (single-select) tapping an exercise pops the sheet with that
+/// [Exercise]. With [multiSelect] tapping toggles a check and the sheet pops
+/// with a `List<Exercise>` (in selection order) from the sticky
+/// "Add N exercises" button.
 class ExerciseSelectionSheet extends StatefulWidget {
-  const ExerciseSelectionSheet({super.key});
+  /// Allow picking several exercises at once; pops with `List<Exercise>`.
+  final bool multiSelect;
+
+  /// Exercises already in the workout: shown checked and disabled in
+  /// [multiSelect] mode.
+  final Set<String> excludedExerciseIds;
+
+  /// Data source; defaults to [ExerciseRepository]. Injectable for tests.
+  final ExerciseRepository? repository;
+
+  const ExerciseSelectionSheet({
+    super.key,
+    this.multiSelect = false,
+    this.excludedExerciseIds = const {},
+    this.repository,
+  });
 
   @override
   State<ExerciseSelectionSheet> createState() => _ExerciseSelectionSheetState();
 }
 
 class _ExerciseSelectionSheetState extends State<ExerciseSelectionSheet> {
-  final ExerciseRepository _exerciseRepository = ExerciseRepository();
+  late final ExerciseRepository _exerciseRepository =
+      widget.repository ?? ExerciseRepository();
+
+  /// Picked exercises in selection order (multi-select mode only).
+  final List<Exercise> _selected = [];
+
+  bool _isSelected(Exercise exercise) =>
+      _selected.any((e) => e.id == exercise.id);
+
+  void _toggle(Exercise exercise) {
+    setState(() {
+      if (_isSelected(exercise)) {
+        _selected.removeWhere((e) => e.id == exercise.id);
+      } else {
+        _selected.add(exercise);
+      }
+    });
+  }
   List<Exercise> _exercises = [];
   List<Exercise> _filteredExercises = [];
   List<String> _categories = ['Any Category'];
@@ -131,11 +167,18 @@ class _ExerciseSelectionSheetState extends State<ExerciseSelectionSheet> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  _exercises.isEmpty
-                      ? 'Select Exercise'
-                      : 'Select Exercise (${_exercises.length})',
-                  style: Theme.of(context).textTheme.titleLarge,
+                Expanded(
+                  child: Text(
+                    widget.multiSelect
+                        ? (_selected.isEmpty
+                            ? 'Add Exercises'
+                            : 'Add Exercises (${_selected.length} selected)')
+                        : (_exercises.isEmpty
+                            ? 'Select Exercise'
+                            : 'Select Exercise (${_exercises.length})'),
+                    style: Theme.of(context).textTheme.titleLarge,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.close),
@@ -321,6 +364,10 @@ class _ExerciseSelectionSheetState extends State<ExerciseSelectionSheet> {
                                 itemCount: _filteredExercises.length,
                                 itemBuilder: (context, index) {
                                   final exercise = _filteredExercises[index];
+                                  if (widget.multiSelect) {
+                                    return _buildMultiSelectTile(
+                                        context, exercise);
+                                  }
                                   return Card(
                                     margin: const EdgeInsets.symmetric(
                                       horizontal: 16.0,
@@ -344,7 +391,72 @@ class _ExerciseSelectionSheetState extends State<ExerciseSelectionSheet> {
                     ],
                   ),
           ),
+          if (widget.multiSelect) _buildAddBar(context),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMultiSelectTile(BuildContext context, Exercise exercise) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final alreadyAdded = widget.excludedExerciseIds.contains(exercise.id);
+    final selected = _isSelected(exercise);
+    final subtitle = alreadyAdded
+        ? 'Already in workout'
+        : _exerciseSubtitle(exercise);
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+      color: selected ? colorScheme.primaryContainer : null,
+      child: CheckboxListTile(
+        key: ValueKey('exercise-pick-${exercise.id}'),
+        value: alreadyAdded || selected,
+        onChanged: alreadyAdded ? null : (_) => _toggle(exercise),
+        enabled: !alreadyAdded,
+        controlAffinity: ListTileControlAffinity.trailing,
+        title: Text(
+          exercise.name,
+          style: selected
+              ? TextStyle(color: colorScheme.onPrimaryContainer)
+              : null,
+        ),
+        subtitle: subtitle.isEmpty
+            ? null
+            : Text(
+                subtitle,
+                style: selected
+                    ? TextStyle(color: colorScheme.onPrimaryContainer)
+                    : null,
+              ),
+      ),
+    );
+  }
+
+  Widget _buildAddBar(BuildContext context) {
+    final count = _selected.length;
+    final label = count == 1 ? 'Add 1 exercise' : 'Add $count exercises';
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      elevation: 8,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: FilledButton.icon(
+              key: const ValueKey('exercise-pick-add'),
+              icon: const Icon(Icons.add),
+              label: Text(label),
+              onPressed: count == 0
+                  ? null
+                  : () => Navigator.pop(
+                        context,
+                        List<Exercise>.unmodifiable(_selected),
+                      ),
+            ),
+          ),
+        ),
       ),
     );
   }

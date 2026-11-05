@@ -73,3 +73,6 @@ tasks/
 /android/.kotlin/
 /flutter_*.log
 /.cursor/
+
+# Old local platform backup (contains a keystore) - never commit
+/platform_backup/
