@@ -49,7 +49,11 @@ class AIWorkoutGenerator {
     }
   }
 
-  /// Generate a focused AI workout using a prepared context pipeline
+  /// Generate a focused AI workout using a prepared context pipeline.
+  ///
+  /// [split] tells the AI which muscle split to build ("Back & Biceps": main
+  /// back, secondary biceps); a non-empty [candidatePool] limits the
+  /// exercises the AI's picks are matched against (e.g. the split's muscles).
   Future<Workout> generateAiWorkout({
     required String workoutName,
     required String focus,
@@ -57,6 +61,8 @@ class AIWorkoutGenerator {
     int lookbackDays = 21,
     int maxRecentWorkouts = 6,
     WorkoutPreferences? preferences,
+    AiSplitRequest? split,
+    List<Exercise>? candidatePool,
   }) async {
     try {
       AppLogger.info('Generating focused AI workout: $workoutName');
@@ -72,6 +78,7 @@ class AIWorkoutGenerator {
         focus: focus,
         context: context,
         preferences: prefs,
+        split: split,
       );
 
       return _buildWorkoutFromSuggestion(
@@ -80,6 +87,7 @@ class AIWorkoutGenerator {
         recentWorkouts: recentWorkouts,
         focus: focus,
         preferences: prefs,
+        candidatePool: candidatePool,
       );
     } catch (error, stackTrace) {
       AppLogger.error('Failed to generate focused AI workout', error, stackTrace);
@@ -97,13 +105,17 @@ class AIWorkoutGenerator {
     required List<Workout> recentWorkouts,
     String? focus,
     WorkoutPreferences? preferences,
+    List<Exercise>? candidatePool,
   }) async {
     // Step 2: Parse AI suggestion to extract exercise recommendations
     final exerciseRecommendations =
         _parseAISuggestion(aiSuggestion, focus: focus);
 
-    // Step 3: Get available exercises from database
-    var allExercises = await _exerciseRepository.getExercises();
+    // Step 3: Get available exercises (the caller's pool, else the library)
+    final hasPool = candidatePool != null && candidatePool.isNotEmpty;
+    var allExercises = hasPool
+        ? List<Exercise>.of(candidatePool)
+        : await _exerciseRepository.getExercises();
     // Honour "exclude core" unless the user explicitly asked for a core build.
     final coreRequested = focus?.toLowerCase().contains('core') ?? false;
     if (preferences?.excludeCore == true && !coreRequested) {
@@ -113,7 +125,8 @@ class AIWorkoutGenerator {
           .toList();
       if (withoutCore.isNotEmpty) allExercises = withoutCore;
     }
-    final focusPool = _filterExercisesForFocus(allExercises, focus);
+    final focusPool =
+        hasPool ? allExercises : _filterExercisesForFocus(allExercises, focus);
     final primaryPool = focusPool.isNotEmpty ? focusPool : allExercises;
 
     // Step 4: Match AI recommendations with actual exercises
