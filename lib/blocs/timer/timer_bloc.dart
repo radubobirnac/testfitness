@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:testfitness/blocs/timer/rest_complete_announcer.dart';
 import 'package:testfitness/blocs/timer/timer_event.dart';
 import 'package:testfitness/blocs/timer/timer_state.dart';
 import 'package:testfitness/services/ai_service.dart';
@@ -10,9 +11,12 @@ import 'package:testfitness/utils/error_handler.dart';
 /// BLoC for managing timer operations
 class TimerBloc extends Bloc<TimerEvent, TimerState> {
   final RestTimerManager _timerManager = RestTimerManager();
+  final RestCompleteAnnouncer _announcer;
   StreamSubscription<RestTimerState>? _timerSubscription;
 
-  TimerBloc() : super(const TimerState.initial()) {
+  TimerBloc({RestCompleteAnnouncer? announcer})
+      : _announcer = announcer ?? RestCompleteAnnouncer(),
+        super(const TimerState.initial()) {
     on<TimerInitialized>(_onInitialized);
     on<TimerStarted>(_onStarted);
     on<TimerPaused>(_onPaused);
@@ -216,17 +220,14 @@ class TimerBloc extends Bloc<TimerEvent, TimerState> {
     }
   }
 
-  /// Generate AI motivation asynchronously
-  void _generateAIMotivation() {
-    try {
-      final aiService = AIService();
-      aiService.generateQuickMotivation(
-        context: 'rest_complete',
-        speakAloud: true,
-      );
-    } catch (e) {
-      AppLogger.warning('Failed to generate AI motivation: $e');
-    }
+  /// Speak the rest-complete phrase (user voice; respects Motivational
+  /// Phrases and Timer Sound switches). Phrase generation is offline.
+  void _announceRestComplete(String phrase,
+      {required bool completedWhileBackgrounded}) {
+    unawaited(_announcer.announce(
+      phrase,
+      completedWhileBackgrounded: completedWhileBackgrounded,
+    ));
   }
 
   /// Update timer duration
@@ -359,8 +360,14 @@ class TimerBloc extends Bloc<TimerEvent, TimerState> {
         : 0.0;
     final justCompleted = managerState.isCompleted && !state.isCompleted;
 
-    if (justCompleted) {
-      _generateAIMotivation();
+    final completionPhrase = justCompleted
+        ? AIService.quickMotivationPhrase('rest_complete')
+        : null;
+    if (completionPhrase != null) {
+      _announceRestComplete(
+        completionPhrase,
+        completedWhileBackgrounded: managerState.completedWhileBackgrounded,
+      );
     }
 
     emit(state.copyWith(
@@ -371,7 +378,7 @@ class TimerBloc extends Bloc<TimerEvent, TimerState> {
       isCompleted: managerState.isCompleted,
       progress: progress,
       currentMotivationalPhrase:
-          justCompleted ? "Let's Go! 💪" : state.currentMotivationalPhrase,
+          completionPhrase ?? state.currentMotivationalPhrase,
       completedWhileBackgrounded: managerState.completedWhileBackgrounded,
       clearMotivationalPhrase: !managerState.isCompleted,
       clearError: true,

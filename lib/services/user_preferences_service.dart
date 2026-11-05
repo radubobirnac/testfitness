@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/utils/app_logger.dart';
 
@@ -7,10 +10,19 @@ enum ExperienceLevel { beginner, intermediate, advanced }
 
 /// Service for managing user preferences
 class UserPreferencesService {
-  // Keys for preferences
-  static const String _restTimerDurationKey = 'rest_timer_duration';
-  static const String _useMetricUnitsKey = 'use_metric_units';
-  static const String _playSoundOnTimerEndKey = 'play_sound_on_timer_end';
+  // Keys for preferences (public so AppBloc / RestPreferencesService read
+  // the same storage).
+  static const String restTimerDurationKey = 'rest_timer_duration';
+  static const String useMetricUnitsKey = 'use_metric_units';
+  static const String playSoundOnTimerEndKey = 'play_sound_on_timer_end';
+  static const String smartRestEnabledKey = 'smart_rest_enabled';
+  static const String workoutPreferencesKey = 'workout_preferences_v1';
+  static const String _restTimerDurationKey = restTimerDurationKey;
+  static const String _useMetricUnitsKey = useMetricUnitsKey;
+  static const String _playSoundOnTimerEndKey = playSoundOnTimerEndKey;
+  static const String _workoutPrefsMigratedKey =
+      'workout_preferences_migrated_v1';
+  static const String _userProfileKey = 'user_profile';
   // Bar & plates are stored per unit so switching units never shows a
   // 20 "lb" bar or 45 "kg" plates.
   static const String _barWeightKgKey = 'bar_weight_kg';
@@ -24,6 +36,27 @@ class UserPreferencesService {
   static const bool _defaultUseMetricUnits = false; // Default to imperial (Lbs)
   static const bool _defaultPlaySoundOnTimerEnd =
       true; // Default to playing sound
+  static const bool defaultSmartRestEnabled = true;
+
+  /// Workout-suggestion preferences used by the coach (and AI, if a key is
+  /// set). Values here are the defaults.
+  static const Map<String, dynamic> defaultWorkoutPreferences = {
+    'defaultBodyParts': 2,
+    'defaultDurationMinutes': 45,
+    'excludeCore': false,
+    'workoutFocus': 'balanced',
+    'preferredBodyParts': <String>[],
+  };
+
+  /// Values offered by the "Workout Focus" dropdown.
+  static const List<String> workoutFocusValues = [
+    'balanced', 'strength', 'endurance', 'upper', 'lower', //
+  ];
+
+  /// Body part names offered as "Preferred Body Parts" chips.
+  static const List<String> workoutBodyParts = [
+    'Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Core', 'Cardio', //
+  ];
 
   /// Default bar weight: 20 kg Olympic bar / 45 lb bar.
   static double defaultBarWeight({required bool metric}) =>
@@ -50,8 +83,20 @@ class UserPreferencesService {
   factory UserPreferencesService() => _instance;
   UserPreferencesService._internal();
 
+  /// A separate instance backed by [prefs] (tests).
+  @visibleForTesting
+  UserPreferencesService.withPrefs(SharedPreferences prefs) {
+    _prefs = prefs;
+    _initialized = true;
+  }
+
   late SharedPreferences _prefs;
   bool _initialized = false;
+
+  /// Forget the attached SharedPreferences so the next [initialize] picks up
+  /// a fresh (mock) instance (tests).
+  @visibleForTesting
+  void resetForTesting() => _initialized = false;
 
   /// Initialize the service
   Future<void> initialize() async {
@@ -59,6 +104,7 @@ class UserPreferencesService {
       try {
         _prefs = await SharedPreferences.getInstance();
         _initialized = true;
+        await migrateWorkoutPreferencesFromProfile();
       } catch (e, stackTrace) {
         AppLogger.error('Error initializing SharedPreferences', e, stackTrace);
       }
@@ -316,6 +362,126 @@ class UserPreferencesService {
     } catch (e) {
       AppLogger.error('Error setting experience level', e);
       return false;
+    }
+  }
+
+  /// Whether rest defaults come from the exercise type (heavy barbell 2:30,
+  /// compounds 2:00, machine/cable 1:30, isolation 1:00) instead of the
+  /// global rest duration.
+  bool getSmartRestEnabled() {
+    if (!_initialized) return defaultSmartRestEnabled;
+    try {
+      return _prefs.getBool(smartRestEnabledKey) ?? defaultSmartRestEnabled;
+    } catch (e) {
+      AppLogger.error('Error getting smart rest setting', e);
+      return defaultSmartRestEnabled;
+    }
+  }
+
+  Future<bool> setSmartRestEnabled(bool enabled) async {
+    if (!_initialized) await initialize();
+    if (!_initialized) return false;
+    try {
+      return await _prefs.setBool(smartRestEnabledKey, enabled);
+    } catch (e) {
+      AppLogger.error('Error setting smart rest setting', e);
+      return false;
+    }
+  }
+
+  /// Workout-suggestion preferences, always with every key present:
+  /// 'defaultBodyParts' (int 1-3, default 2), 'defaultDurationMinutes' (int,
+  /// default 45), 'excludeCore' (bool, default false), 'workoutFocus' (one of
+  /// [workoutFocusValues], default 'balanced') and 'preferredBodyParts'
+  /// (names from [workoutBodyParts], default empty).
+  Map<String, dynamic> getWorkoutPreferences() {
+    final stored = <String, dynamic>{};
+    if (_initialized) {
+      try {
+        final raw = _prefs.getString(workoutPreferencesKey);
+        if (raw != null) {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map) {
+            decoded.forEach((k, v) {
+              if (k is String) stored[k] = v;
+            });
+          }
+        }
+      } catch (e) {
+        AppLogger.warning('Ignoring malformed workout preferences', e);
+      }
+    }
+    return _normalizeWorkoutPreferences(stored);
+  }
+
+  /// Set one workout-suggestion preference (see [getWorkoutPreferences]).
+  Future<void> setWorkoutPreference(String key, dynamic value) async {
+    if (!_initialized) await initialize();
+    if (!_initialized) return;
+    final current = getWorkoutPreferences()..[key] = value;
+    try {
+      await _prefs.setString(workoutPreferencesKey,
+          jsonEncode(_normalizeWorkoutPreferences(current)));
+    } catch (e) {
+      AppLogger.error('Error saving workout preference $key', e);
+    }
+  }
+
+  static Map<String, dynamic> _normalizeWorkoutPreferences(
+      Map<String, dynamic> raw) {
+    final d = defaultWorkoutPreferences;
+    final bodyParts = raw['defaultBodyParts'];
+    final duration = raw['defaultDurationMinutes'];
+    final excludeCore = raw['excludeCore'];
+    final focus = raw['workoutFocus'];
+    final preferred = raw['preferredBodyParts'];
+    return {
+      'defaultBodyParts': bodyParts is num
+          ? bodyParts.round().clamp(1, 3)
+          : d['defaultBodyParts'],
+      'defaultDurationMinutes': duration is num && duration > 0
+          ? duration.round()
+          : d['defaultDurationMinutes'],
+      'excludeCore': excludeCore is bool ? excludeCore : d['excludeCore'],
+      'workoutFocus': focus is String && workoutFocusValues.contains(focus)
+          ? focus
+          : d['workoutFocus'],
+      'preferredBodyParts': preferred is List
+          ? preferred
+              .whereType<String>()
+              .where(workoutBodyParts.contains)
+              .toSet()
+              .toList()
+          : <String>[],
+    };
+  }
+
+  /// One-time copy of workout preferences that older versions kept in the
+  /// saved user profile ('user_profile' JSON, `preferences` map).
+  Future<void> migrateWorkoutPreferencesFromProfile() async {
+    if (!_initialized) return;
+    try {
+      if (_prefs.getBool(_workoutPrefsMigratedKey) ?? false) return;
+      if (_prefs.getString(workoutPreferencesKey) == null) {
+        final profileJson = _prefs.getString(_userProfileKey);
+        if (profileJson != null) {
+          final profile = jsonDecode(profileJson);
+          final old = profile is Map ? profile['preferences'] : null;
+          if (old is Map) {
+            final picked = <String, dynamic>{};
+            for (final key in defaultWorkoutPreferences.keys) {
+              if (old.containsKey(key)) picked[key] = old[key];
+            }
+            if (picked.isNotEmpty) {
+              await _prefs.setString(workoutPreferencesKey,
+                  jsonEncode(_normalizeWorkoutPreferences(picked)));
+            }
+          }
+        }
+      }
+      await _prefs.setBool(_workoutPrefsMigratedKey, true);
+    } catch (e) {
+      AppLogger.warning('Could not migrate workout preferences', e);
     }
   }
 

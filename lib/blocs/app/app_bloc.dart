@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/blocs/app/app_event.dart';
 import 'package:testfitness/blocs/app/app_state.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/utils/error_handler.dart';
 
@@ -15,6 +16,7 @@ class AppBloc extends Bloc<AppEvent, AppState> {
     on<AppTabChanged>(_onTabChanged);
     on<AppThemeToggled>(_onThemeToggled);
     on<AppPreferencesUpdated>(_onPreferencesUpdated);
+    on<AppPreferencesReloaded>(_onPreferencesReloaded);
     on<AppErrorCleared>(_onErrorCleared);
     on<AppErrorOccurred>(_onErrorOccurred);
   }
@@ -31,10 +33,12 @@ class AppBloc extends Bloc<AppEvent, AppState> {
       final isDarkMode = prefs.getBool(_darkModeKey) ?? false;
       final currentTabIndex = prefs.getInt(_currentTabKey) ?? 0;
 
-      // Create preferences map
+      // Create preferences map. Settings are read (never written) here so
+      // a missing key never overwrites what the user or onboarding chose.
       final preferences = <String, dynamic>{
         _darkModeKey: isDarkMode,
         _currentTabKey: currentTabIndex,
+        ..._readSettings(prefs),
       };
 
       emit(state.copyWith(
@@ -56,6 +60,33 @@ class AppBloc extends Bloc<AppEvent, AppState> {
         isLoading: false,
         errorMessage: 'Failed to initialize app: ${error.toString()}',
       ));
+    }
+  }
+
+  /// Workout settings as stored, falling back to defaults without writing.
+  static Map<String, dynamic> _readSettings(SharedPreferences prefs) => {
+        UserPreferencesService.restTimerDurationKey:
+            prefs.getInt(UserPreferencesService.restTimerDurationKey) ??
+                UserPreferencesService.defaultRestTimerDuration,
+        UserPreferencesService.useMetricUnitsKey:
+            prefs.getBool(UserPreferencesService.useMetricUnitsKey) ??
+                UserPreferencesService.defaultUseMetricUnits,
+        UserPreferencesService.playSoundOnTimerEndKey:
+            prefs.getBool(UserPreferencesService.playSoundOnTimerEndKey) ??
+                UserPreferencesService.defaultPlaySoundOnTimerEnd,
+      };
+
+  /// Re-read workout settings from storage (e.g. after onboarding or another
+  /// screen changed them). Read-only.
+  Future<void> _onPreferencesReloaded(
+      AppPreferencesReloaded event, Emitter<AppState> emit) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      emit(state.copyWith(
+        preferences: {...state.preferences, ..._readSettings(prefs)},
+      ));
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to reload preferences', error, stackTrace);
     }
   }
 

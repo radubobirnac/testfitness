@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:testfitness/services/api_key_service.dart';
 import 'package:testfitness/models/workout.dart';
+import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/offline_indicator.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 
 /// AI Service powered by Google Gemini 2.5 Flash Lite
 ///
@@ -18,17 +18,12 @@ class AIService {
   /// Key the current [_model] was built with; used to rebuild on key change.
   String? _modelKey;
   GenerativeModel? _model;
-  late final FlutterTts _tts;
   static AIService? _instance;
 
   AIService._internal() {
     if (!hasApiKey) {
       AppLogger.warning('Gemini API key is not configured; AI features disabled');
     }
-
-    // Initialize FlutterTTS (interim solution until Dart SDK supports Gemini TTS)
-    _tts = FlutterTts();
-    _initializeTTS();
   }
 
   factory AIService() {
@@ -140,6 +135,7 @@ class AIService {
     required List<Workout> recentWorkouts,
     int lookbackDays = 14,
     bool? preferSingleMuscleGroup,
+    WorkoutPreferences? preferences,
   }) async {
     try {
       AppLogger.info('Generating next workout suggestion');
@@ -148,6 +144,7 @@ class AIService {
         recentWorkouts,
         lookbackDays,
         preferSingleMuscleGroup: preferSingleMuscleGroup,
+        preferences: preferences,
       );
 
       final content = [Content.text(prompt)];
@@ -172,6 +169,7 @@ class AIService {
   Future<String> generateAiWorkout({
     required String focus,
     required String context,
+    WorkoutPreferences? preferences,
   }) async {
     try {
       AppLogger.info('Generating focused AI workout');
@@ -179,6 +177,7 @@ class AIService {
       final prompt = _buildAiWorkoutPrompt(
         focus: focus,
         context: context,
+        preferences: preferences,
       );
 
       final content = [Content.text(prompt)];
@@ -234,104 +233,47 @@ Requirements:
     }
   }
 
-  /// Initialize TTS settings (improved FlutterTTS until Gemini TTS is available)
-  Future<void> _initializeTTS() async {
-    try {
-      await _tts.setLanguage('en-US');
-      await _tts.setSpeechRate(0.6); // Slightly faster for better experience
-      await _tts.setVolume(0.9); // Louder for gym environment
-      await _tts.setPitch(1.1); // Slightly higher pitch for motivation
+  static const Map<String, List<String>> _motivationPhrases = {
+    'rest_complete': [
+      "Let's Go! 💪",
+      'Beast Mode! 🔥',
+      'Crush It! 💥',
+      'You Got This! ⚡',
+      'Time to Shine! ✨',
+    ],
+    'set_complete': [
+      'Great Set! 🎯',
+      'Keep Going! 💪',
+      'Strong Work! 🔥',
+      'Excellent! ⭐',
+      'Power Up! ⚡',
+    ],
+    'workout_complete': [
+      'Workout Done! 🏆',
+      'Amazing Job! 🌟',
+      'Victory! 🎉',
+      'Crushed It! 💥',
+      'Champion! 👑',
+    ],
+  };
 
-      // Try to set a better voice if available
-      final voices = await _tts.getVoices;
-      if (voices.isNotEmpty) {
-        // Look for a more natural voice
-        final preferredVoices = voices
-            .where((voice) =>
-                voice['name'].toString().toLowerCase().contains('enhanced') ||
-                voice['name'].toString().toLowerCase().contains('neural') ||
-                voice['name'].toString().toLowerCase().contains('premium'))
-            .toList();
-
-        if (preferredVoices.isNotEmpty) {
-          await _tts.setVoice(preferredVoices.first);
-          AppLogger.info(
-              'Using enhanced voice: ${preferredVoices.first['name']}');
-        }
-      }
-
-      AppLogger.info('Enhanced TTS initialized successfully');
-    } catch (e) {
-      AppLogger.error('Failed to initialize enhanced TTS', e);
-    }
-  }
-
-  /// Speak text using enhanced FlutterTTS (interim until Gemini TTS available)
-  Future<void> speakText(String text) async {
-    try {
-      // Clean text for better TTS pronunciation
-      final cleanText = text
-          .replaceAll(
-              RegExp(r'[^\w\s.,!?]'), '') // Remove emojis and special chars
-          .replaceAll(RegExp(r'\s+'), ' ') // Normalize whitespace
-          .trim();
-
-      if (cleanText.isEmpty) return;
-
-      await _tts.speak(cleanText);
-      AppLogger.info(
-          'Speaking enhanced TTS: ${cleanText.substring(0, cleanText.length > 50 ? 50 : cleanText.length)}...');
-    } catch (e) {
-      AppLogger.error('Failed to speak text with enhanced TTS', e);
-    }
+  /// Picks a quick motivational phrase. Purely offline (built-in list, no
+  /// API key or network). Speaking it is the caller's job, via
+  /// EnhancedTTSService, so the user's voice settings and switches apply.
+  static String quickMotivationPhrase(String context, {int? seed}) {
+    final phrases =
+        _motivationPhrases[context] ?? _motivationPhrases['rest_complete']!;
+    final index = (seed ?? DateTime.now().millisecondsSinceEpoch) %
+        phrases.length;
+    return phrases[index];
   }
 
   /// Generate quick motivational phrases for timer completion
   Future<String> generateQuickMotivation({
     required String
         context, // 'rest_complete', 'set_complete', 'workout_complete'
-    bool speakAloud = true,
   }) async {
-    try {
-      final motivationPhrases = {
-        'rest_complete': [
-          'Let\'s Go! 💪',
-          'Beast Mode! 🔥',
-          'Crush It! 💥',
-          'You Got This! ⚡',
-          'Time to Shine! ✨',
-        ],
-        'set_complete': [
-          'Great Set! 🎯',
-          'Keep Going! 💪',
-          'Strong Work! 🔥',
-          'Excellent! ⭐',
-          'Power Up! ⚡',
-        ],
-        'workout_complete': [
-          'Workout Done! 🏆',
-          'Amazing Job! 🌟',
-          'Victory! 🎉',
-          'Crushed It! 💥',
-          'Champion! 👑',
-        ],
-      };
-
-      final phrases =
-          motivationPhrases[context] ?? motivationPhrases['rest_complete']!;
-      final randomPhrase =
-          phrases[(DateTime.now().millisecondsSinceEpoch % phrases.length)];
-
-      if (speakAloud) {
-        await speakText(randomPhrase.replaceAll(
-            RegExp(r'[^\w\s]'), '')); // Remove emojis for TTS
-      }
-
-      return randomPhrase;
-    } catch (e) {
-      AppLogger.error('Failed to generate quick motivation', e);
-      return 'Keep Going! 💪';
-    }
+    return quickMotivationPhrase(context);
   }
 
   /// Build progress analysis prompt
@@ -377,11 +319,13 @@ Requirements:
     List<Workout> recentWorkouts,
     int lookbackDays, {
     bool? preferSingleMuscleGroup,
+    WorkoutPreferences? preferences,
   }) {
     final buffer = StringBuffer();
 
     buffer.writeln('You are an AI fitness coach analyzing workout patterns.');
     buffer.writeln('');
+    _writePreferences(buffer, preferences);
     buffer.writeln('User\'s Recent Workout History (last $lookbackDays days):');
     buffer.writeln('');
 
@@ -435,7 +379,13 @@ Requirements:
     buffer.writeln(
         '- Suggest the next logical workout based on recovery and balance');
     buffer.writeln('- Consider muscle group rotation and rest periods');
-    buffer.writeln('- Provide 3-5 specific exercise recommendations');
+    buffer.writeln(preferences == null
+        ? '- Provide 3-5 specific exercise recommendations'
+        : '- Provide ${preferences.exerciseCount} specific exercise '
+            'recommendations');
+    if (preferences != null) {
+      buffer.writeln('- Respect every user preference listed above');
+    }
     buffer.writeln('- Keep the suggestion concise (under 100 words)');
     buffer.writeln('- Focus on what muscle groups to target next');
     buffer.writeln('- Include reasoning for the suggestion');
@@ -449,6 +399,7 @@ Requirements:
   String _buildAiWorkoutPrompt({
     required String focus,
     required String context,
+    WorkoutPreferences? preferences,
   }) {
     final buffer = StringBuffer();
 
@@ -456,11 +407,17 @@ Requirements:
     buffer.writeln('');
     buffer.writeln('Workout focus: $focus.');
     buffer.writeln('');
+    _writePreferences(buffer, preferences,
+        note: 'The chosen workout focus above decides the muscle groups; '
+            'apply these where they do not conflict with it.');
     buffer.writeln('Context from recent workouts and progression rules:');
     buffer.writeln(context);
     buffer.writeln('');
     buffer.writeln('Requirements:');
-    buffer.writeln('- Provide 4-6 specific exercise names that match the focus');
+    buffer.writeln(preferences == null
+        ? '- Provide 4-6 specific exercise names that match the focus'
+        : '- Provide ${preferences.exerciseCount} specific exercise names '
+            'that match the focus');
     buffer.writeln(
         '- Only include exercises that directly train the focus muscle groups');
     buffer.writeln('- Avoid repeating the exact same primary muscle groups from the most recent workout unless the focus demands it');
@@ -470,6 +427,18 @@ Requirements:
     buffer.writeln('- Keep total response under 120 words');
 
     return buffer.toString();
+  }
+
+  /// Writes the user's "Workout Suggestions" settings into a prompt.
+  void _writePreferences(StringBuffer buffer, WorkoutPreferences? preferences,
+      {String? note}) {
+    if (preferences == null) return;
+    buffer.writeln('User workout preferences (from their settings):');
+    for (final line in preferences.describeForPrompt()) {
+      buffer.writeln('- $line');
+    }
+    if (note != null) buffer.writeln(note);
+    buffer.writeln('');
   }
 
   /// Get day name from date

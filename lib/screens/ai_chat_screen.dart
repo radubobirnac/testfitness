@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:testfitness/blocs/app/app_bloc.dart';
+import 'package:testfitness/blocs/app/app_event.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/utils/accessibility_helper.dart';
 import 'package:testfitness/widgets/offline_indicator.dart';
@@ -40,9 +43,35 @@ class _AIChatScreenState extends State<AIChatScreen> {
     ));
   }
 
+  /// Index of the Profile tab in MainScreen (holds the AI settings).
+  static const int _profileTabIndex = 4;
+
+  /// Leaves the chat and opens Profile, where the Gemini API key is set.
+  void _openAiSettings() {
+    AppBloc? appBloc;
+    try {
+      appBloc = context.read<AppBloc>();
+    } catch (_) {
+      appBloc = null;
+    }
+    if (appBloc == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Open Profile → AI settings to add your Gemini API key.'),
+      ));
+      return;
+    }
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    appBloc.add(const AppTabChanged(_profileTabIndex));
+  }
+
   Future<void> _sendMessage() async {
     final message = _messageController.text.trim();
     if (message.isEmpty) return;
+    if (_aiService.unavailableReason != null) {
+      // The banner explains why; just refresh so it shows the latest reason.
+      setState(() {});
+      return;
+    }
 
     // Add user message
     setState(() {
@@ -58,15 +87,10 @@ class _AIChatScreenState extends State<AIChatScreen> {
     _scrollToBottom();
 
     try {
-      // Check API key and connectivity (distinct messages for each)
-      final unavailableReason = _aiService.unavailableReason;
-      if (unavailableReason != null) {
-        throw AIServiceException(unavailableReason);
-      }
-
       // Get AI response
       final response = await _aiService.answerFitnessQuestion(message);
-      
+      if (!mounted) return;
+
       setState(() {
         _messages.add(ChatMessage(
           text: response,
@@ -80,9 +104,13 @@ class _AIChatScreenState extends State<AIChatScreen> {
       AccessibilityHelper.announceMessage('AI response received');
       
     } catch (error) {
+      if (!mounted) return;
+      final text = error is AIServiceException
+          ? error.message
+          : 'Sorry, something went wrong. Please try again.';
       setState(() {
         _messages.add(ChatMessage(
-          text: "Sorry, I encountered an error: ${error.toString()}",
+          text: text,
           isUser: false,
           timestamp: DateTime.now(),
           isError: true,
@@ -181,8 +209,78 @@ class _AIChatScreenState extends State<AIChatScreen> {
     _sendMessage();
   }
 
+  /// Up-front explanation when AI chat can't be used (no key / offline).
+  Widget _buildUnavailableBanner(String reason) {
+    final scheme = Theme.of(context).colorScheme;
+    final missingKey = !_aiService.hasApiKey;
+    return Semantics(
+      container: true,
+      label: 'AI chat unavailable. $reason',
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(missingKey ? Icons.key : Icons.wifi_off,
+                    color: scheme.onSecondaryContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    missingKey
+                        ? 'Connect your AI coach'
+                        : 'AI chat is offline',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: scheme.onSecondaryContainer,
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(reason, style: TextStyle(color: scheme.onSecondaryContainer)),
+            if (missingKey) ...[
+              const SizedBox(height: 4),
+              Text(
+                'You can add a free Gemini API key in Profile → AI settings. '
+                'Your offline coach still plans workouts without it.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSecondaryContainer,
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _openAiSettings,
+                icon: const Icon(Icons.key),
+                label: const Text('Add API key'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Rebuilt on connectivity changes so the banner and input stay current.
+    return ConnectivityBuilder(
+      builder: (context, _) => _buildChat(context),
+    );
+  }
+
+  Widget _buildChat(BuildContext context) {
+    final unavailableReason = _aiService.unavailableReason;
+    final canChat = unavailableReason == null;
     return OfflineIndicator(
       child: Scaffold(
         appBar: AppBar(
@@ -190,7 +288,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
           actions: [
             AccessibilityHelper.accessibleIconButton(
               icon: Icons.help_outline,
-              onPressed: _showQuickActions,
+              onPressed: canChat ? _showQuickActions : null,
               semanticLabel: 'Show quick actions',
               tooltip: 'Quick Actions',
             ),
@@ -198,32 +296,9 @@ class _AIChatScreenState extends State<AIChatScreen> {
         ),
         body: Column(
           children: [
-            // Connection status banner
-            ConnectivityBuilder(
-              builder: (context, isOnline) {
-                if (!isOnline) {
-                  return Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    color: Colors.orange,
-                    child: const Row(
-                      children: [
-                        Icon(Icons.wifi_off, color: Colors.white, size: 20),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'AI features require internet connection',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                return const SizedBox.shrink();
-              },
-            ),
-            
+            if (unavailableReason != null)
+              _buildUnavailableBanner(unavailableReason),
+
             // Chat messages
             Expanded(
               child: ListView.builder(
@@ -255,19 +330,30 @@ class _AIChatScreenState extends State<AIChatScreen> {
               child: Row(
                 children: [
                   Expanded(
-                    child: AccessibilityHelper.accessibleTextField(
-                      controller: _messageController,
-                      label: 'Ask me anything about fitness...',
-                      hint: 'Type your fitness question here',
-                      semanticLabel: 'Fitness question input field',
-                      keyboardType: TextInputType.multiline,
-                      onChanged: (value) => setState(() {}),
+                    child: Semantics(
+                      label: 'Fitness question input field',
+                      textField: true,
+                      child: TextField(
+                        controller: _messageController,
+                        enabled: canChat,
+                        decoration: InputDecoration(
+                          labelText: canChat
+                              ? 'Ask me anything about fitness...'
+                              : 'AI chat unavailable',
+                          hintText: 'Type your fitness question here',
+                          border: const OutlineInputBorder(),
+                        ),
+                        keyboardType: TextInputType.multiline,
+                        onChanged: (value) => setState(() {}),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   AccessibilityHelper.accessibleIconButton(
                     icon: Icons.send,
-                    onPressed: _messageController.text.trim().isNotEmpty && !_isLoading
+                    onPressed: canChat &&
+                            _messageController.text.trim().isNotEmpty &&
+                            !_isLoading
                         ? _sendMessage
                         : null,
                     semanticLabel: 'Send message',

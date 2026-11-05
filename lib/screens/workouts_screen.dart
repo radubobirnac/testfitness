@@ -126,7 +126,9 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     final coach = ProgressionCoach(
       useMetric: UserPreferencesService().getUseMetricUnits(),
     );
-    return coach.suggestNextWorkout(workouts, allExercises);
+    return coach.suggestNextWorkout(workouts, allExercises,
+        preferences: WorkoutPreferences.fromMap(
+            UserPreferencesService().getWorkoutPreferences()));
   }
 
   Future<void> _createNextWorkout(WorkoutState state) async {

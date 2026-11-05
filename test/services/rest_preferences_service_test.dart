@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/services/rest_preferences_service.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 
 Exercise _ex(String id, String name, String? category) =>
     Exercise(id: id, name: name, category: category);
@@ -79,6 +80,56 @@ void main() {
           {RestPreferencesService.storageKey: 'not json'});
       final prefs = await SharedPreferences.getInstance();
       final service = RestPreferencesService.withPrefs(prefs);
+      expect(service.restSecondsFor(squat), 150);
+    });
+  });
+
+  group('RestPreferencesService smart rest setting', () {
+    final squat = _ex('squat', 'Squat', 'Barbell');
+    final curl = _ex('curl', 'Dumbbell Curl', 'Dumbbell');
+
+    test('smart rest is on by default: type defaults apply', () async {
+      SharedPreferences.setMockInitialValues({'rest_timer_duration': 200});
+      final prefs = await SharedPreferences.getInstance();
+      final service = RestPreferencesService.withPrefs(prefs);
+      expect(service.restSecondsFor(squat), 150);
+      expect(service.restSecondsFor(curl), 60);
+    });
+
+    test('smart rest off: global duration, overrides still win', () async {
+      SharedPreferences.setMockInitialValues({
+        'smart_rest_enabled': false,
+        'rest_timer_duration': 105,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      final service = RestPreferencesService.withPrefs(prefs);
+      expect(service.restSecondsFor(squat), 105);
+      expect(service.restSecondsFor(curl), 105);
+      expect(service.fallbackSecondsFor(squat), 105);
+
+      await service.setRestSeconds('squat', 240);
+      expect(service.restSecondsFor(squat), 240);
+      expect(service.restSecondsFor(curl), 105);
+    });
+
+    test('smart rest off without a stored duration uses 90 s', () async {
+      SharedPreferences.setMockInitialValues({'smart_rest_enabled': false});
+      final prefs = await SharedPreferences.getInstance();
+      final service = RestPreferencesService.withPrefs(prefs);
+      expect(service.restSecondsFor(squat), 90);
+    });
+
+    test('toggling the setting takes effect immediately', () async {
+      SharedPreferences.setMockInitialValues({'rest_timer_duration': 75});
+      final prefs = await SharedPreferences.getInstance();
+      final service = RestPreferencesService.withPrefs(prefs);
+      final userPrefs = UserPreferencesService.withPrefs(prefs);
+      expect(userPrefs.getSmartRestEnabled(), isTrue);
+      expect(service.restSecondsFor(squat), 150);
+
+      await userPrefs.setSmartRestEnabled(false);
+      expect(service.restSecondsFor(squat), 75);
+      await userPrefs.setSmartRestEnabled(true);
       expect(service.restSecondsFor(squat), 150);
     });
   });

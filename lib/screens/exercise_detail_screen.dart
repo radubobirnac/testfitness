@@ -228,8 +228,9 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     }
   }
 
-  /// Rest seconds for [exerciseId]: its per-exercise rest (override or type
-  /// default), or the global rest-timer preference for an unknown exercise.
+  /// Rest seconds for [exerciseId]: its per-exercise rest (override, else
+  /// smart type default or the global rest duration, per Settings), or the
+  /// global rest-timer preference for an unknown exercise.
   int _restSecondsFor(String exerciseId) {
     final exercise = _exercises[exerciseId];
     if (exercise == null) {
@@ -620,8 +621,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   Future<void> _showRestPicker(Exercise exercise) async {
     final service = RestPreferencesService();
     final current = service.overrideFor(exercise.id);
-    final defaultSeconds =
-        RestPreferencesService.defaultRestSecondsFor(exercise);
+    final defaultSeconds = service.fallbackSecondsFor(exercise);
     // -1 = "Default"; null = dismissed.
     final picked = await showModalBottomSheet<int>(
       context: context,

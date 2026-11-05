@@ -3,14 +3,17 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/models/exercise.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 
 /// Rest time between working sets, per exercise.
 ///
-/// Each exercise uses the user's override when one is set, else a default by
-/// exercise type: heavy barbell compounds 150 s, other barbell/dumbbell
-/// compounds 120 s, machine/cable 90 s and isolation lifts 60 s. Overrides
-/// are persisted in shared_preferences as one JSON map.
+/// Each exercise uses the user's override when one is set. Otherwise, with
+/// "Smart rest by exercise type" on (the default), a default by exercise
+/// type: heavy barbell compounds 150 s, other barbell/dumbbell compounds
+/// 120 s, machine/cable 90 s and isolation lifts 60 s; with it off, the
+/// global rest duration. Overrides are persisted in shared_preferences as
+/// one JSON map.
 class RestPreferencesService {
   static const String storageKey = 'rest_seconds_by_exercise_v1';
 
@@ -72,9 +75,23 @@ class RestPreferencesService {
   /// The user's override for [exerciseId], or null when using the default.
   int? overrideFor(String exerciseId) => _overrides[exerciseId];
 
-  /// Rest seconds for [exercise]: the override, else the type default.
+  /// Rest seconds for [exercise]: the per-exercise override, else
+  /// [fallbackSecondsFor].
   int restSecondsFor(Exercise exercise) =>
-      _overrides[exercise.id] ?? defaultRestSecondsFor(exercise);
+      _overrides[exercise.id] ?? fallbackSecondsFor(exercise);
+
+  /// Rest used when [exercise] has no override: the type default while
+  /// "Smart rest by exercise type" is on (default), else the global rest
+  /// duration from Settings.
+  int fallbackSecondsFor(Exercise exercise) {
+    final prefs = _prefs;
+    final smart = prefs?.getBool(UserPreferencesService.smartRestEnabledKey) ??
+        UserPreferencesService.defaultSmartRestEnabled;
+    if (smart || prefs == null) return defaultRestSecondsFor(exercise);
+    final global = prefs.getInt(UserPreferencesService.restTimerDurationKey) ??
+        UserPreferencesService.defaultRestTimerDuration;
+    return global > 0 ? global : defaultRestSecondsFor(exercise);
+  }
 
   /// Set ([seconds] > 0) or clear (null) the override for [exerciseId].
   Future<void> setRestSeconds(String exerciseId, int? seconds) async {
