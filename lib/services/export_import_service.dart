@@ -329,8 +329,9 @@ class ExportImportService {
       // Parse body/fitness metrics (absent in older backups)
       final metricsList = data['metrics'] as List<dynamic>? ?? [];
       final metrics = metricsList
-          .map((m) => FitnessMetric.fromMap(
+          .map((m) => FitnessMetric.tryFromMap(
               Map<String, dynamic>.from(m as Map<dynamic, dynamic>)))
+          .whereType<FitnessMetric>()
           .toList();
 
       // Parse preferences

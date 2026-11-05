@@ -148,13 +148,17 @@ class FitnessMetric extends Equatable {
       );
     } catch (e) {
       ErrorHandler.handleParsingError(e, null, 'FitnessMetric.fromMap');
-      // Return a minimal valid metric if parsing fails
-      return FitnessMetric(
-        id: const Uuid().v4(),
-        type: MetricType.weight,
-        value: 0.0,
-        date: DateTime.now(),
-      );
+      rethrow;
+    }
+  }
+
+  /// Like [FitnessMetric.fromMap] but returns null for a damaged record, so
+  /// callers can skip it instead of showing an invented "0, today" value.
+  static FitnessMetric? tryFromMap(Map<String, dynamic> map) {
+    try {
+      return FitnessMetric.fromMap(map);
+    } catch (_) {
+      return null;
     }
   }
 

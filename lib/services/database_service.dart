@@ -320,9 +320,10 @@ class DatabaseService {
     final db = await database;
     final List<Map<String, dynamic>> maps = await db.query('fitness_metrics');
 
-    return List.generate(maps.length, (i) {
-      return FitnessMetric.fromMap(maps[i]);
-    });
+    return maps
+        .map(FitnessMetric.tryFromMap)
+        .whereType<FitnessMetric>()
+        .toList();
   }
 
   /// Get metrics of a specific type
@@ -335,9 +336,10 @@ class DatabaseService {
       orderBy: 'date DESC',
     );
 
-    return List.generate(maps.length, (i) {
-      return FitnessMetric.fromMap(maps[i]);
-    });
+    return maps
+        .map(FitnessMetric.tryFromMap)
+        .whereType<FitnessMetric>()
+        .toList();
   }
 
   /// Get metrics within a date range
@@ -351,9 +353,10 @@ class DatabaseService {
       orderBy: 'date DESC',
     );
 
-    return List.generate(maps.length, (i) {
-      return FitnessMetric.fromMap(maps[i]);
-    });
+    return maps
+        .map(FitnessMetric.tryFromMap)
+        .whereType<FitnessMetric>()
+        .toList();
   }
 
   /// Get metrics of a specific type within a date range
@@ -371,9 +374,10 @@ class DatabaseService {
       orderBy: 'date DESC',
     );
 
-    return List.generate(maps.length, (i) {
-      return FitnessMetric.fromMap(maps[i]);
-    });
+    return maps
+        .map(FitnessMetric.tryFromMap)
+        .whereType<FitnessMetric>()
+        .toList();
   }
 
   /// Get the most recent metric of a specific type
@@ -388,7 +392,7 @@ class DatabaseService {
     );
 
     if (maps.isNotEmpty) {
-      return FitnessMetric.fromMap(maps.first);
+      return FitnessMetric.tryFromMap(maps.first);
     }
     return null;
   }

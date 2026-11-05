@@ -34,6 +34,13 @@ class ExerciseRepository {
     await _databaseService.deleteExercise(id);
   }
 
+  /// Whether any logged workout uses this exercise. Deleting such an
+  /// exercise would leave its past sets pointing at nothing.
+  Future<bool> isExerciseInUse(String id) async {
+    final workouts = await _databaseService.getWorkouts();
+    return workouts.any((w) => w.sets.any((s) => s.exerciseId == id));
+  }
+
   /// Search exercises by name
   Future<List<Exercise>> searchExercises(String query) async {
     final exercises = await getExercises();

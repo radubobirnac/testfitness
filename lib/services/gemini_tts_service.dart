@@ -249,14 +249,16 @@ class GeminiTTSService {
     AppLogger.info(
         'Gemini TTS request: model=$_selectedModel, ${encodedBody.length} bytes');
 
-    final response = await http.post(
-      Uri.parse(url),
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: encodedBody,
-    );
+    final response = await http
+        .post(
+          Uri.parse(url),
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: encodedBody,
+        )
+        .timeout(const Duration(seconds: 30));
 
     AppLogger.info(
         'Gemini TTS response: status=${response.statusCode}, ${response.bodyBytes.length} bytes');
@@ -453,14 +455,16 @@ class GeminiTTSService {
 
       AppLogger.info('Debug API Call - URL: $url');
 
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: jsonEncode(requestBody),
-      );
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey,
+            },
+            body: jsonEncode(requestBody),
+          )
+          .timeout(const Duration(seconds: 30));
 
       final result = {
         'statusCode': response.statusCode,

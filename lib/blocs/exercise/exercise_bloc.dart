@@ -353,6 +353,16 @@ class ExerciseBloc extends Bloc<ExerciseEvent, ExerciseState> {
       emit(state.copyWith(
           isLoading: true, clearError: true, clearSuccess: true));
 
+      // Protect workout history: don't delete exercises that have logged sets.
+      if (await _exerciseRepository.isExerciseInUse(event.exerciseId)) {
+        emit(state.copyWith(
+          isLoading: false,
+          errorMessage:
+              'This exercise is part of your workout history, so it can\'t be deleted.',
+        ));
+        return;
+      }
+
       await _exerciseRepository.deleteExercise(event.exerciseId);
 
       // Reload exercises to get updated list

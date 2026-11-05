@@ -327,33 +327,36 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         break;
     }
 
-    // Sort workouts by creation date (newest first)
-    // Use the workout ID which contains timestamp for creation order
+    // Sort newest first by the workout's real date (completed, scheduled,
+    // or latest logged set), falling back to legacy timestamp ids.
     filtered.sort((a, b) {
-      // Extract timestamp from workout ID (format: workout_timestamp)
-      final aTimestamp = _extractTimestampFromId(a.id);
-      final bTimestamp = _extractTimestampFromId(b.id);
-
-      // Sort newest first (descending order)
-      return bTimestamp.compareTo(aTimestamp);
+      final byDate = _sortTimestamp(b).compareTo(_sortTimestamp(a));
+      if (byDate != 0) return byDate;
+      return b.id.compareTo(a.id); // stable tie-break
     });
 
     return filtered;
   }
 
-  /// Extract timestamp from workout ID for sorting
-  int _extractTimestampFromId(String id) {
-    try {
-      // Handle both UUID format and timestamp format
-      if (id.startsWith('workout_')) {
-        final timestampStr = id.substring(8); // Remove 'workout_' prefix
-        return int.tryParse(timestampStr) ?? 0;
+  /// Milliseconds used to order workouts newest-first.
+  static int _sortTimestamp(Workout workout) {
+    final date = workout.completedDate ?? workout.scheduledDate;
+    if (date != null) return date.millisecondsSinceEpoch;
+
+    DateTime? latestSet;
+    for (final set in workout.sets) {
+      final at = set.completedAt;
+      if (at != null && (latestSet == null || at.isAfter(latestSet))) {
+        latestSet = at;
       }
-      // For UUID format, use hashCode as fallback (not ideal but consistent)
-      return id.hashCode;
-    } catch (e) {
-      return 0;
     }
+    if (latestSet != null) return latestSet.millisecondsSinceEpoch;
+
+    // Legacy ids look like "workout_<millis>".
+    if (workout.id.startsWith('workout_')) {
+      return int.tryParse(workout.id.substring(8)) ?? 0;
+    }
+    return 0;
   }
 
   /// Complete a workout

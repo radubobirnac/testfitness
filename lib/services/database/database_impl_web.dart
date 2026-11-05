@@ -105,7 +105,10 @@ class DatabaseImpl implements DatabaseInterface {
       if (metricsJson != null) {
         final List<dynamic> metricsList = jsonDecode(metricsJson);
         _metrics.addAll(
-          metricsList.map((m) => FitnessMetric.fromMap(m)).toList(),
+          metricsList
+              .map((m) => FitnessMetric.tryFromMap(
+                  Map<String, dynamic>.from(m as Map<dynamic, dynamic>)))
+              .whereType<FitnessMetric>(),
         );
       }
 
