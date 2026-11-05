@@ -14,6 +14,9 @@ import 'package:testfitness/screens/heart_rate_monitor_screen.dart';
 import 'package:testfitness/screens/weight_test_selection_screen.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/services/ai_workout_generator.dart';
+import 'package:testfitness/repositories/exercise_repository.dart';
+import 'package:testfitness/services/progression_coach.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_loading_card.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
@@ -209,20 +212,28 @@ class _HomeScreenState extends State<HomeScreen> {
         Navigator.of(context).pop();
       }
 
-      AppLogger.error('Failed to create AI workout', error);
+      AppLogger.warning('AI workout unavailable, using coach', error);
 
+      // Fallback: offline coach builds the workout from the user's history.
+      final coachWorkout = await _buildCoachWorkout(recentWorkouts);
+      if (!mounted) return;
       // ignore: use_build_context_synchronously
-      // Show error message
+      context.read<WorkoutBloc>().add(WorkoutCreateRequested(coachWorkout));
+      // ignore: use_build_context_synchronously
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) =>
+              ExerciseDetailScreen.editWorkout(workoutId: coachWorkout.id),
+        ),
+      ).then((_) => _refreshWorkouts());
+      // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to create AI workout: ${error.toString()}'),
-          backgroundColor: Colors.red,
+        const SnackBar(
+          content: Text(
+              'AI unavailable — your coach built this workout from your history.'),
         ),
       );
-
-      // ignore: use_build_context_synchronously
-      // Fallback to regular workout creation
-      _createNewWorkout(context);
     }
   }
 
@@ -675,10 +686,39 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Get AI workout suggestion based on recent workout patterns
-  Future<String> _getAIWorkoutSuggestion(List<Workout> allWorkouts) async {
-    try {
-      final aiService = AIService();
+  /// Offline, rules-based workout built by the progression coach.
+  Future<Workout> _buildCoachWorkout(List<Workout> allWorkouts) async {
+    final exercises = await ExerciseRepository().getExercises();
+    final coach =
+        ProgressionCoach(useMetric: UserPreferencesService().getUseMetricUnits());
+    return coach.suggestNextWorkout(allWorkouts, exercises);
+  }
 
+  /// Short text describing the coach's suggested next workout.
+  Future<String> _coachSuggestionText(List<Workout> allWorkouts) async {
+    final workout = await _buildCoachWorkout(allWorkouts);
+    final exercises = await ExerciseRepository().getExercises();
+    final names = {for (final e in exercises) e.id: e.name};
+    final coach =
+        ProgressionCoach(useMetric: UserPreferencesService().getUseMetricUnits());
+    final lines = <String>[];
+    for (final id in workout.exerciseIds) {
+      final first = workout.sets.firstWhere((s) => s.exerciseId == id);
+      final name = names[id] ?? 'Exercise';
+      lines.add(first.weight > 0
+          ? '$name ${coach.formatWeight(first.weight)} × ${first.reps}'
+          : '$name × ${first.reps}');
+    }
+    if (lines.isEmpty) return 'Log a workout and your coach will plan the next one.';
+    return 'Coach suggests: ${lines.join(', ')}';
+  }
+
+  Future<String> _getAIWorkoutSuggestion(List<Workout> allWorkouts) async {
+    final aiService = AIService();
+    if (!aiService.isAvailable) {
+      return _coachSuggestionText(allWorkouts);
+    }
+    try {
       // Get recent completed workouts for analysis
       final recentWorkouts = allWorkouts
           .where((w) => w.isCompleted && w.completedDate != null)
@@ -693,7 +733,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } catch (e) {
       AppLogger.warning('Failed to get AI workout suggestion: $e');
-      rethrow;
+      return _coachSuggestionText(allWorkouts);
     }
   }
 }
