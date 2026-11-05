@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/models/fitness_goal.dart';
+import 'package:testfitness/models/fitness_metric.dart';
 import 'package:testfitness/models/workout_set.dart';
 import 'package:testfitness/services/database_service_factory.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
@@ -27,6 +28,7 @@ class ExportImportService {
     required List<Workout> workouts,
     required List<Exercise> exercises,
     List<FitnessGoal>? goals,
+    List<FitnessMetric>? metrics,
     Map<String, dynamic>? userPreferences,
   }) async {
     try {
@@ -41,6 +43,7 @@ class ExportImportService {
         'workouts': workouts.map(_workoutToExportMap).toList(),
         'exercises': exercises.map((e) => e.toMap()).toList(),
         'goals': goals?.map((g) => g.toMap()).toList() ?? [],
+        'metrics': metrics?.map((m) => m.toMap()).toList() ?? [],
         'userPreferences': userPreferences ?? {},
       };
 
@@ -79,7 +82,19 @@ class ExportImportService {
         if (workout.sets.isEmpty) {
           // Workout with no sets
           buffer.writeln(
-              '$dateStr,"${_escapeCsv(workout.name)}","","No exercises","","",0,0,0,${workout.durationMinutes ?? 0},${workout.isCompleted}');
+              <String>[
+                dateStr,
+                workout.name,
+                '',
+                'No exercises',
+                '',
+                '',
+                '0',
+                '0',
+                '0',
+                '${workout.durationMinutes ?? 0}',
+                '${workout.isCompleted}',
+              ].map(_escapeCsv).join(','));
         } else {
           for (final set in workout.sets) {
             final exercise = exerciseById[set.exerciseId];
@@ -87,7 +102,19 @@ class ExportImportService {
             final muscleGroup = exercise?.muscleGroup ?? '';
             final category = exercise?.category ?? '';
             buffer.writeln(
-                '$dateStr,"${_escapeCsv(workout.name)}","${_escapeCsv(set.exerciseId)}","${_escapeCsv(exerciseName)}","${_escapeCsv(muscleGroup)}","${_escapeCsv(category)}",1,${set.reps},${set.weight},${workout.durationMinutes ?? 0},${workout.isCompleted}');
+<String>[
+                  dateStr,
+                  workout.name,
+                  set.exerciseId,
+                  exerciseName,
+                  muscleGroup,
+                  category,
+                  '1',
+                  '${set.reps}',
+                  '${set.weight}',
+                  '${workout.durationMinutes ?? 0}',
+                  '${workout.isCompleted}',
+                ].map(_escapeCsv).join(','));
           }
         }
       }
@@ -299,6 +326,13 @@ class ExportImportService {
           .map((g) => FitnessGoal.fromMap(g as Map<String, dynamic>))
           .toList();
 
+      // Parse body/fitness metrics (absent in older backups)
+      final metricsList = data['metrics'] as List<dynamic>? ?? [];
+      final metrics = metricsList
+          .map((m) => FitnessMetric.fromMap(
+              Map<String, dynamic>.from(m as Map<dynamic, dynamic>)))
+          .toList();
+
       // Parse preferences
       final preferences =
           data['userPreferences'] as Map<String, dynamic>? ?? {};
@@ -310,6 +344,7 @@ class ExportImportService {
         workouts: workouts,
         exercises: exercises,
         goals: goals,
+        metrics: metrics,
         userPreferences: preferences,
         metadata: metadata,
       );
@@ -471,6 +506,13 @@ class ExportImportService {
       for (final exercise in existingExercises) {
         await db.deleteExercise(exercise.id);
       }
+
+      if (result.metrics.isNotEmpty) {
+        final existingMetrics = await db.getMetrics();
+        for (final metric in existingMetrics) {
+          await db.deleteMetric(metric.id);
+        }
+      }
     }
 
     final exerciseIdRemap = await _buildExerciseIdRemap(
@@ -493,6 +535,16 @@ class ExportImportService {
       await db.insertWorkout(_remapWorkoutExercises(workout, exerciseIdRemap));
     }
 
+    for (final metric in result.metrics) {
+      if (mode == ImportMode.merge) {
+        await db.deleteMetric(metric.id);
+      }
+      await db.insertMetric(metric);
+    }
+
+    // NOTE: result.goals are parsed but not persisted: the app has no goal
+    // storage (FitnessGoal is not saved by any repository/database yet).
+
     if (result.userPreferences.isNotEmpty) {
       await UserPreferencesService()
           .applyPreferences(result.userPreferences);
@@ -503,51 +555,88 @@ class ExportImportService {
     return backupPath;
   }
 
-  /// Escape CSV special characters
+  /// Escape a single CSV field per RFC 4180: fields containing a comma,
+  /// double quote, CR or LF are wrapped in quotes with inner quotes doubled.
+  /// Each field must be escaped exactly once.
+  @visibleForTesting
+  static String escapeCsvField(String value) => _escapeCsv(value);
+
   static String _escapeCsv(String value) {
-    if (value.contains('"') || value.contains(',') || value.contains('\n')) {
+    if (value.contains('"') ||
+        value.contains(',') ||
+        value.contains('\n') ||
+        value.contains('\r')) {
       return '"${value.replaceAll('"', '""')}"';
     }
     return value;
   }
 
-  static List<List<String>> _parseCsv(String csvString) {
-    final lines = const LineSplitter().convert(csvString);
-    final rows = <List<String>>[];
-    for (final line in lines) {
-      if (line.trim().isEmpty) continue;
-      rows.add(_parseCsvLine(line));
-    }
-    return rows;
-  }
+  /// Parse CSV text per RFC 4180 (quoted fields may contain commas, doubled
+  /// quotes and line breaks). Blank lines are skipped.
+  @visibleForTesting
+  static List<List<String>> parseCsv(String csvString) => _parseCsv(csvString);
 
-  static List<String> _parseCsvLine(String line) {
-    final values = <String>[];
-    final buffer = StringBuffer();
+  static List<List<String>> _parseCsv(String csvString) {
+    var input = csvString;
+    if (input.startsWith('\uFEFF')) {
+      input = input.substring(1);
+    }
+
+    final rows = <List<String>>[];
+    var row = <String>[];
+    final field = StringBuffer();
     var inQuotes = false;
-    for (var i = 0; i < line.length; i++) {
-      final char = line[i];
-      if (char == '"') {
-        final nextIsQuote = i + 1 < line.length && line[i + 1] == '"';
-        if (nextIsQuote) {
-          buffer.write('"');
-          i++;
+    var rowHasContent = false;
+
+    void endField() {
+      row.add(field.toString());
+      field.clear();
+    }
+
+    void endRow() {
+      endField();
+      if (rowHasContent || row.any((cell) => cell.trim().isNotEmpty)) {
+        rows.add(row);
+      }
+      row = <String>[];
+      rowHasContent = false;
+    }
+
+    for (var i = 0; i < input.length; i++) {
+      final char = input[i];
+      if (inQuotes) {
+        if (char == '"') {
+          if (i + 1 < input.length && input[i + 1] == '"') {
+            field.write('"');
+            i++;
+          } else {
+            inQuotes = false;
+          }
         } else {
-          inQuotes = !inQuotes;
+          field.write(char);
         }
         continue;
       }
 
-      if (char == ',' && !inQuotes) {
-        values.add(buffer.toString());
-        buffer.clear();
-        continue;
+      if (char == '"') {
+        inQuotes = true;
+        rowHasContent = true;
+      } else if (char == ',') {
+        endField();
+        rowHasContent = true;
+      } else if (char == '\r' || char == '\n') {
+        if (char == '\r' && i + 1 < input.length && input[i + 1] == '\n') {
+          i++;
+        }
+        endRow();
+      } else {
+        field.write(char);
       }
-
-      buffer.write(char);
     }
-    values.add(buffer.toString());
-    return values;
+    if (field.isNotEmpty || row.isNotEmpty || rowHasContent) {
+      endRow();
+    }
+    return rows;
   }
 
   static List<String> _normalizeHeaders(
@@ -653,14 +742,6 @@ class ExportImportService {
     return double.tryParse(value.trim());
   }
 
-  static String _guessMimeType(String filename) {
-    final lower = filename.toLowerCase();
-    if (lower.endsWith('.json')) return 'application/json';
-    if (lower.endsWith('.csv')) return 'text/csv';
-    if (lower.endsWith('.md')) return 'text/markdown';
-    return 'text/plain';
-  }
-
   static Workout _remapWorkoutExercises(
     Workout workout,
     Map<String, String> exerciseIdRemap,
@@ -712,10 +793,12 @@ class ExportImportService {
       if (kIsWeb) return null;
       final workouts = await db.getWorkouts();
       final exercises = await db.getExercises();
+      final metrics = await db.getMetrics();
       final preferences = await UserPreferencesService().exportPreferences();
       final jsonData = await exportToJson(
         workouts: workouts,
         exercises: exercises,
+        metrics: metrics,
         userPreferences: preferences,
       );
       final filename =
@@ -733,6 +816,7 @@ class ImportResult {
   final List<Workout> workouts;
   final List<Exercise> exercises;
   final List<FitnessGoal> goals;
+  final List<FitnessMetric> metrics;
   final Map<String, dynamic> userPreferences;
   final Map<String, dynamic> metadata;
 
@@ -740,6 +824,7 @@ class ImportResult {
     required this.workouts,
     required this.exercises,
     required this.goals,
+    this.metrics = const [],
     required this.userPreferences,
     required this.metadata,
   });

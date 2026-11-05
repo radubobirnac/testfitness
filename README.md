@@ -69,10 +69,23 @@ lib/
 ### Migration Process
 - The application has been updated to allow for the addition of new exercises without losing existing workout data. Users can now add exercises through the app's UI without needing to uninstall or reinstall the application.
 
+## API keys
+
+AI features use Google Gemini. No API key is shipped inside the app.
+
+- **Users** add their own Gemini API key in the app under **Profile → AI settings**. The key is stored only on that device; it can be cleared there at any time.
+- **Developers** can supply a key for debug builds without saving it in the app:
+  ```bash
+  flutter run --dart-define=GEMINI_API_KEY=your-gemini-api-key
+  ```
+  Release builds never read a compile-time key. Do not add `.env` (or any secrets) to `flutter: assets:` in `pubspec.yaml`, since assets ship in plain text inside the APK/IPA.
+- `.env` / `.env.example` are for local developer tooling only.
+- For a production release, AI calls should go through a backend proxy that holds the key, rather than calling Gemini directly from the device.
+
 ## State of the Union (Recent Work)
 
 **AI & connectivity**
-- Gemini API key is now loaded from `.env` (no hard‑coded key).
+- API keys are no longer bundled: `.env` is not a Flutter asset and the app does not read it (see **API keys** below).
 - Connectivity tracking is initialized at startup and the offline banner is enabled app‑wide.
 - AI workout creation now asks for single vs multi‑muscle focus and uses that preference.
 - AI workout suggestions are cached to avoid repeated API calls; refresh only on demand.
@@ -80,7 +93,7 @@ lib/
 **Timer & watch behavior**
 - Rest timer now includes a per‑timer “watch buzz” toggle (notification‑based).
 - Background completion notification is skipped when watch buzz is off.
-- Timer debug report is available in Profile / Settings > Developer Tools for quick troubleshooting.
+- Timer debug report is available in Profile / Settings > Developer Tools (debug builds only) for quick troubleshooting.
 
 **Debugging timer notifications**
 - Open Profile / Settings > Developer Tools > Copy Debug Report.

@@ -309,8 +309,6 @@ class _GeminiTTSTestScreenState extends State<GeminiTTSTestScreen> {
             children: [
               _buildDebugRow('Initialized', status['isInitialized'].toString()),
               _buildDebugRow('Has API Key', status['hasApiKey'].toString()),
-              _buildDebugRow(
-                  'API Key Length', status['apiKeyLength'].toString()),
               _buildDebugRow('Selected Voice', status['selectedVoice']),
               _buildDebugRow('Selected Model', status['selectedModel']),
               _buildDebugRow(

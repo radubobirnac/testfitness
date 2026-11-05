@@ -13,21 +13,50 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
   WorkoutBloc({WorkoutRepository? workoutRepository})
       : _workoutRepository = workoutRepository ?? WorkoutRepository(),
         super(const WorkoutState.initial()) {
-    on<WorkoutLoadRequested>(_onLoadRequested);
-    on<WorkoutFilterChanged>(_onFilterChanged);
-    on<WorkoutLoadByIdRequested>(_onLoadByIdRequested);
-    on<WorkoutCreateRequested>(_onCreateRequested);
-    on<WorkoutUpdateRequested>(_onUpdateRequested);
-    on<WorkoutDeleteRequested>(_onDeleteRequested);
-    on<WorkoutCompleteRequested>(_onCompleteRequested);
-    on<WorkoutDuplicateRequested>(_onDuplicateRequested);
-    on<WorkoutSetAddRequested>(_onSetAddRequested);
-    on<WorkoutSetUpdateRequested>(_onSetUpdateRequested);
-    on<WorkoutSetRemoveRequested>(_onSetRemoveRequested);
-    on<WorkoutSetCompleteRequested>(_onSetCompleteRequested);
-    on<WorkoutExerciseReplaceRequested>(_onExerciseReplaceRequested);
-    on<WorkoutLoadForDateRequested>(_onLoadForDateRequested);
-    on<WorkoutErrorCleared>(_onErrorCleared);
+    // A single handler with a sequential transformer guarantees that ALL
+    // workout events (across event types) are processed one at a time.
+    // flutter_bloc 8 otherwise runs handlers concurrently, letting
+    // read-modify-write handlers interleave and overwrite each other.
+    on<WorkoutEvent>(_onEvent, transformer: _sequential());
+  }
+
+  /// Process events one at a time so read-modify-write handlers cannot
+  /// interleave and overwrite each other's results.
+  static EventTransformer<E> _sequential<E>() =>
+      (events, mapper) => events.asyncExpand(mapper);
+
+  Future<void> _onEvent(WorkoutEvent event, Emitter<WorkoutState> emit) async {
+    if (event is WorkoutLoadRequested) {
+      await _onLoadRequested(event, emit);
+    } else if (event is WorkoutFilterChanged) {
+      _onFilterChanged(event, emit);
+    } else if (event is WorkoutLoadByIdRequested) {
+      await _onLoadByIdRequested(event, emit);
+    } else if (event is WorkoutCreateRequested) {
+      await _onCreateRequested(event, emit);
+    } else if (event is WorkoutUpdateRequested) {
+      await _onUpdateRequested(event, emit);
+    } else if (event is WorkoutDeleteRequested) {
+      await _onDeleteRequested(event, emit);
+    } else if (event is WorkoutCompleteRequested) {
+      await _onCompleteRequested(event, emit);
+    } else if (event is WorkoutDuplicateRequested) {
+      await _onDuplicateRequested(event, emit);
+    } else if (event is WorkoutSetAddRequested) {
+      await _onSetAddRequested(event, emit);
+    } else if (event is WorkoutSetUpdateRequested) {
+      await _onSetUpdateRequested(event, emit);
+    } else if (event is WorkoutSetRemoveRequested) {
+      await _onSetRemoveRequested(event, emit);
+    } else if (event is WorkoutSetCompleteRequested) {
+      await _onSetCompleteRequested(event, emit);
+    } else if (event is WorkoutExerciseReplaceRequested) {
+      await _onExerciseReplaceRequested(event, emit);
+    } else if (event is WorkoutLoadForDateRequested) {
+      await _onLoadForDateRequested(event, emit);
+    } else if (event is WorkoutErrorCleared) {
+      _onErrorCleared(event, emit);
+    }
   }
 
   /// Load all workouts
@@ -123,8 +152,10 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
       WorkoutCreateRequested event, Emitter<WorkoutState> emit) async {
     try {
       AppLogger.info('Creating new workout: ${event.workout.name}');
-      emit(state.copyWith(
-          isLoading: true, clearError: true, clearSuccess: true));
+      if (!event.silent) {
+        emit(state.copyWith(
+            isLoading: true, clearError: true, clearSuccess: true));
+      }
 
       await _workoutRepository.addWorkout(event.workout);
 
@@ -132,12 +163,21 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
       final workouts = await _workoutRepository.getWorkouts();
       final filteredWorkouts = _applyFilter(workouts, state.currentFilter);
 
-      emit(state.copyWith(
-        workouts: workouts,
-        filteredWorkouts: filteredWorkouts,
-        isLoading: false,
-        successMessage: 'Workout created successfully',
-      ));
+      if (event.silent) {
+        emit(state.copyWith(
+          workouts: workouts,
+          filteredWorkouts: filteredWorkouts,
+          currentWorkout: event.workout,
+          clearSuccess: true,
+        ));
+      } else {
+        emit(state.copyWith(
+          workouts: workouts,
+          filteredWorkouts: filteredWorkouts,
+          isLoading: false,
+          successMessage: 'Workout created successfully',
+        ));
+      }
 
       AppLogger.info('Workout created successfully: ${event.workout.name}');
     } catch (error, stackTrace) {
@@ -156,8 +196,10 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
       WorkoutUpdateRequested event, Emitter<WorkoutState> emit) async {
     try {
       AppLogger.info('Updating workout: ${event.workout.name}');
-      emit(state.copyWith(
-          isLoading: true, clearError: true, clearSuccess: true));
+      if (!event.silent) {
+        emit(state.copyWith(
+            isLoading: true, clearError: true, clearSuccess: true));
+      }
 
       await _workoutRepository.updateWorkout(event.workout);
 
@@ -166,17 +208,27 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
       final filteredWorkouts = _applyFilter(workouts, state.currentFilter);
 
       // Update current workout if it's the same one
-      final updatedCurrentWorkout = state.currentWorkout?.id == event.workout.id
-          ? event.workout
-          : state.currentWorkout;
+      final updatedCurrentWorkout =
+          event.silent || state.currentWorkout?.id == event.workout.id
+              ? event.workout
+              : state.currentWorkout;
 
-      emit(state.copyWith(
-        workouts: workouts,
-        filteredWorkouts: filteredWorkouts,
-        currentWorkout: updatedCurrentWorkout,
-        isLoading: false,
-        successMessage: 'Workout updated successfully',
-      ));
+      if (event.silent) {
+        emit(state.copyWith(
+          workouts: workouts,
+          filteredWorkouts: filteredWorkouts,
+          currentWorkout: updatedCurrentWorkout,
+          clearSuccess: true,
+        ));
+      } else {
+        emit(state.copyWith(
+          workouts: workouts,
+          filteredWorkouts: filteredWorkouts,
+          currentWorkout: updatedCurrentWorkout,
+          isLoading: false,
+          successMessage: 'Workout updated successfully',
+        ));
+      }
 
       AppLogger.info('Workout updated successfully: ${event.workout.name}');
     } catch (error, stackTrace) {
@@ -205,14 +257,12 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
       final filteredWorkouts = _applyFilter(workouts, state.currentFilter);
 
       // Clear current workout if it was deleted
-      final updatedCurrentWorkout = state.currentWorkout?.id == event.workoutId
-          ? null
-          : state.currentWorkout;
+      final deletedCurrent = state.currentWorkout?.id == event.workoutId;
 
       emit(state.copyWith(
         workouts: workouts,
         filteredWorkouts: filteredWorkouts,
-        currentWorkout: updatedCurrentWorkout,
+        clearCurrentWorkout: deletedCurrent,
         isLoading: false,
         successMessage: 'Workout deleted successfully',
       ));

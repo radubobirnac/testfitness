@@ -73,4 +73,5 @@ flutter:
   # Assets
   assets:
     - assets/icon/
-    - .env
+    # NOTE: .env is intentionally NOT bundled; anything listed here ships
+    # inside the APK/IPA in plain text. See README "API keys".

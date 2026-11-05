@@ -36,23 +36,32 @@ class WorkoutLoadByIdRequested extends WorkoutEvent {
 }
 
 /// Event to create a new workout
+///
+/// When [silent] is true (autosave), the bloc persists the workout without
+/// toggling loading flags or emitting a success message, and sets it as the
+/// current workout.
 class WorkoutCreateRequested extends WorkoutEvent {
   final Workout workout;
+  final bool silent;
 
-  const WorkoutCreateRequested(this.workout);
+  const WorkoutCreateRequested(this.workout, {this.silent = false});
 
   @override
-  List<Object?> get props => [workout];
+  List<Object?> get props => [workout, silent];
 }
 
 /// Event to update an existing workout
+///
+/// When [silent] is true (autosave), the bloc persists the workout without
+/// toggling loading flags or emitting a success message.
 class WorkoutUpdateRequested extends WorkoutEvent {
   final Workout workout;
+  final bool silent;
 
-  const WorkoutUpdateRequested(this.workout);
+  const WorkoutUpdateRequested(this.workout, {this.silent = false});
 
   @override
-  List<Object?> get props => [workout];
+  List<Object?> get props => [workout, silent];
 }
 
 /// Event to delete a workout

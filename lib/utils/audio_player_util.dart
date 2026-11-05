@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/screens/app_loader.dart'; // Import for global plugin instance
@@ -119,8 +120,27 @@ class AudioPlayerUtil {
     }
   }
 
+  /// SharedPreferences key recording that the exact-alarm permission prompt
+  /// ("Alarms & reminders" settings screen) has already been shown once.
+  static const String _exactAlarmPromptedKey =
+      'exact_alarm_permission_prompted';
+
+  /// Cached result of the last exact-alarm capability check (Android only).
+  static bool _canScheduleExactAlarms = false;
+
+  /// Whether exact alarms can currently be scheduled (Android 12+ requires the
+  /// user to grant "Alarms & reminders"). Updated by
+  /// [requestNotificationPermissions]. When false, callers should use inexact
+  /// scheduling instead of exact.
+  static bool get canScheduleExactAlarms => _canScheduleExactAlarms;
+
   /// Request notification permissions when user wants to use timer notifications
-  /// This is called only when the user actually wants to use timer features
+  /// This is called only when the user actually wants to use timer features.
+  ///
+  /// The exact-alarm permission is requested at most once per install (the
+  /// request opens a system settings screen on Android 14+). If it is denied,
+  /// [canScheduleExactAlarms] stays false and callers fall back to inexact
+  /// scheduling without prompting again.
   static Future<bool> requestNotificationPermissions() async {
     try {
       if (!kIsWeb && Platform.isAndroid) {
@@ -134,16 +154,31 @@ class AudioPlayerUtil {
           return false;
         }
 
-        // Request notification permissions
-        final notificationPermission =
-            await androidImplementation.requestNotificationsPermission();
+        // Only show the notification permission dialog when not yet enabled.
+        bool notificationsGranted =
+            await androidImplementation.areNotificationsEnabled() ?? true;
+        if (!notificationsGranted) {
+          notificationsGranted =
+              await androidImplementation.requestNotificationsPermission() ??
+                  false;
+        }
 
-        // Request exact alarms permission for precise timer notifications
-        final alarmPermission =
-            await androidImplementation.requestExactAlarmsPermission();
-
-        final notificationsGranted = notificationPermission ?? true;
-        final exactAlarmsGranted = alarmPermission ?? true;
+        // Exact alarms: check first, prompt at most once ever.
+        bool exactAlarmsGranted =
+            await androidImplementation.canScheduleExactNotifications() ??
+                true;
+        if (!exactAlarmsGranted) {
+          final prefs = await SharedPreferences.getInstance();
+          final alreadyPrompted =
+              prefs.getBool(_exactAlarmPromptedKey) ?? false;
+          if (!alreadyPrompted) {
+            await prefs.setBool(_exactAlarmPromptedKey, true);
+            exactAlarmsGranted =
+                await androidImplementation.requestExactAlarmsPermission() ??
+                    false;
+          }
+        }
+        _canScheduleExactAlarms = exactAlarmsGranted;
 
         AppLogger.audio(
           'Notification permission result',
@@ -163,6 +198,7 @@ class AudioPlayerUtil {
         return true;
       }
 
+      _canScheduleExactAlarms = true; // Not applicable outside Android
       return true; // iOS permissions are handled during initialization
     } catch (e) {
       AppLogger.audio(

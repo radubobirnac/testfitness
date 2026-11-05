@@ -12,7 +12,6 @@ import 'package:testfitness/screens/app_with_error_screen.dart';
 import 'package:testfitness/screens/main_screen.dart';
 import 'package:testfitness/screens/splash_screen.dart';
 // import 'package:testfitness/screens/haptic_test_screen.dart'; // Removed - debug screen not needed
-import 'package:testfitness/services/database/reset_storage.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/services/database_service_factory.dart';
 import 'package:testfitness/services/exercise_seed_service.dart';
@@ -228,11 +227,11 @@ class _AppLoaderState extends State<AppLoader> {
   /// Initialize the database
   Future<void> _initializeDatabase() async {
     try {
-      // For web platform, reset the exercise storage to get the complete set of exercises
-      if (kIsWeb) {
-        AppLogger.info("Web platform detected, resetting exercise storage...");
-        resetWebStorage();
-      }
+      // Note: web exercise storage used to be wiped here on every launch
+      // (to pick up new default exercises), which deleted users' custom
+      // exercises. The web DB seeds defaults only when storage is empty, and
+      // ensureDefaultExercises below adds any missing defaults by name
+      // without creating duplicates.
 
       // Initialize database factory
       await DatabaseServiceFactory.initialize();

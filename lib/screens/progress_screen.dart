@@ -13,6 +13,7 @@ import 'package:testfitness/blocs/workout/workout_state.dart';
 import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/repositories/exercise_repository.dart';
+import 'package:testfitness/repositories/metrics_repository.dart';
 import 'package:testfitness/widgets/advanced_charts.dart';
 import 'package:testfitness/widgets/weight_tracking_chart.dart';
 import 'package:testfitness/widgets/volume_progression_chart.dart';
@@ -646,9 +647,11 @@ class _ProgressScreenState extends State<ProgressScreen> {
       final workouts = context.read<WorkoutBloc>().state.workouts;
       final exercises = await _getExercisesForExport();
       final preferences = await _getPreferencesForExport();
+      final metrics = await MetricsRepository().getMetrics();
       final jsonData = await ExportImportService.exportToJson(
         workouts: workouts,
         exercises: exercises,
+        metrics: metrics,
         userPreferences: preferences,
       );
       final filename =

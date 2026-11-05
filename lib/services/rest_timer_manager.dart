@@ -123,6 +123,9 @@ class RestTimerManager with WidgetsBindingObserver {
       'rest_timer_notifications_enabled';
   static const int _notificationId = 1101;
   static const int _rebootSkewThresholdMs = 5000;
+  // If the timer ended more than this long ago while backgrounded, the OS
+  // notification has already alerted the user; don't replay the in-app bell.
+  static const int _alreadyAlertedThresholdMs = 3000;
 
   static final RestTimerManager _instance = RestTimerManager._internal();
 
@@ -548,18 +551,49 @@ class RestTimerManager with WidgetsBindingObserver {
   }
 
   Future<void> _complete({required bool completedWhileBackgrounded}) async {
+    // Goal: exactly one alert reaches the user.
+    // - Foreground: cancel the OS-scheduled notification; the UI plays the
+    //   in-app bell (shouldSuppressSound=false).
+    // - Background, scheduled notification already delivered (active on
+    //   Android, or no longer pending): leave it alone; suppress the in-app bell.
+    // - Background, scheduled notification still pending (alarm did not fire):
+    //   cancel the pending request, then show the fallback notification and do
+    //   NOT cancel it afterwards; suppress the in-app bell.
     bool shouldSuppressSound = false;
+    bool keepNotification = false;
     if (completedWhileBackgrounded) {
       final wasActive = await _isNotificationActive();
       final wasPending = await _isNotificationPending();
-      _logDebug('background completion: active=$wasActive pending=$wasPending');
+      final overdueMs = _overdueMs(await _clock.now());
+      _logDebug(
+          'background completion: active=$wasActive pending=$wasPending overdueMs=$overdueMs');
 
       if (wasPending) {
-        await _showCompletionNotification();
-        _logDebug('fallback notification shown after background completion');
+        // Cancel the pending scheduled request first so it can't fire later
+        // and so cancelling doesn't remove the fallback we show next.
+        await _cancelCompletionNotification();
+        try {
+          await _showCompletionNotification();
+          _logDebug('fallback notification shown after background completion');
+          shouldSuppressSound = true;
+          keepNotification = true;
+        } catch (e) {
+          AppLogger.warning('RestTimerManager: fallback notification failed', e);
+          _logDebug('fallback notification failed: $e');
+        }
+      } else if (wasActive) {
+        shouldSuppressSound = true;
+        keepNotification = true;
+      } else if (_notificationsEnabled &&
+          (_notificationScheduled ||
+              overdueMs > _alreadyAlertedThresholdMs)) {
+        // Not pending and not (detectably) active: the scheduled notification
+        // was delivered already (iOS can't report active notifications; on
+        // Android the user may have dismissed it, or the app was relaunched
+        // after the end time). Don't replay the bell on resume.
+        shouldSuppressSound = true;
+        keepNotification = true;
       }
-
-      shouldSuppressSound = wasActive || wasPending;
     }
 
     _status = RestTimerStatus.completed;
@@ -569,13 +603,29 @@ class RestTimerManager with WidgetsBindingObserver {
     _completedWhileBackgrounded = shouldSuppressSound;
 
     _logDebug(
-        'complete completedWhileBackgrounded=$completedWhileBackgrounded notificationScheduled=$_notificationScheduled');
+        'complete completedWhileBackgrounded=$completedWhileBackgrounded suppressSound=$shouldSuppressSound notificationScheduled=$_notificationScheduled');
     _stopTicker();
-    await _cancelCompletionNotification();
+    if (keepNotification) {
+      _notificationScheduled = false;
+    } else {
+      await _cancelCompletionNotification();
+    }
     await _stopForegroundService();
     await _clearStorage();
 
     _emitState();
+  }
+
+  /// How long ago the timer reached zero (0 if not yet ended).
+  int _overdueMs(_TimeSample sample) {
+    if (_endElapsedMs != null && sample.elapsedMs != null) {
+      final startElapsedMs = _endElapsedMs! - _totalDurationMs;
+      if (sample.elapsedMs! >= startElapsedMs - _rebootSkewThresholdMs) {
+        return max(0, sample.elapsedMs! - _endElapsedMs!);
+      }
+    }
+    if (_endEpochMs == null) return 0;
+    return max(0, sample.epochMs - _endEpochMs!);
   }
 
   void _startTicker() {
@@ -771,8 +821,11 @@ class RestTimerManager with WidgetsBindingObserver {
       }
     }
 
-    var scheduled =
-        await scheduleWithMode(AndroidScheduleMode.exactAllowWhileIdle);
+    // Only attempt exact scheduling when the exact-alarm permission is held;
+    // otherwise go straight to inexact (no repeated permission prompts).
+    var scheduled = AudioPlayerUtil.canScheduleExactAlarms
+        ? await scheduleWithMode(AndroidScheduleMode.exactAllowWhileIdle)
+        : false;
     if (!scheduled) {
       AppLogger.warning(
           'RestTimerManager: falling back to inexact alarm scheduling');
