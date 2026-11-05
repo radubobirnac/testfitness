@@ -247,9 +247,11 @@ class ExportImportService {
         final file = File('${directory.path}/$filename');
         await file.writeAsString(content);
 
-        await Share.share(
-          'StrengthWave Data Export',
-          subject: filename,
+        await SharePlus.instance.share(
+          ShareParams(
+            text: 'StrengthWave Data Export',
+            subject: filename,
+          ),
         );
 
         AppLogger.info('Successfully shared file: $filename');

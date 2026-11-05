@@ -262,7 +262,9 @@ class AccessibilityHelper {
 
   /// Announce message to screen reader
   static void announceMessage(String message) {
-    SemanticsService.announce(message, TextDirection.ltr);
+    final view = WidgetsBinding.instance.platformDispatcher.implicitView;
+    if (view == null) return;
+    SemanticsService.sendAnnouncement(view, message, TextDirection.ltr);
   }
 
   /// Check if screen reader is enabled

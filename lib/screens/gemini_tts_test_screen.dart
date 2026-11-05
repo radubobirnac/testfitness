@@ -436,7 +436,7 @@ class _GeminiTTSTestScreenState extends State<GeminiTTSTestScreen> {
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
-                      value: _selectedVoice,
+                      initialValue: _selectedVoice,
                       decoration: const InputDecoration(
                         labelText: 'Voice',
                         border: OutlineInputBorder(),
@@ -462,7 +462,7 @@ class _GeminiTTSTestScreenState extends State<GeminiTTSTestScreen> {
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
-                      value: _selectedModel,
+                      initialValue: _selectedModel,
                       decoration: const InputDecoration(
                         labelText: 'Model',
                         border: OutlineInputBorder(),

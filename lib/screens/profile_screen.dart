@@ -1535,7 +1535,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: preferences['workoutFocus'] ?? 'balanced',
+                initialValue: preferences['workoutFocus'] ?? 'balanced',
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   contentPadding:
@@ -1760,7 +1760,7 @@ class _ProfileEditorDialogState extends State<_ProfileEditorDialog> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  value: _selectedGender,
+                  initialValue: _selectedGender,
                   decoration: const InputDecoration(
                     labelText: 'Gender *',
                     border: OutlineInputBorder(),

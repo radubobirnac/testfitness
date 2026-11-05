@@ -31,17 +31,9 @@ void main() {
 
       // Insert workout
       await db.insertWorkout(workout);
-      print(
-          'Inserted workout with ${workout.sets.length} sets: ${workout.sets.map((s) => s.id).join(', ')}');
 
       // Retrieve workout
       final retrieved = await db.getWorkout(workout.id);
-
-      // Debug output
-      print('Retrieved workout has ${retrieved?.sets.length ?? 0} sets');
-      if (retrieved != null && retrieved.sets.isNotEmpty) {
-        print('Set IDs: ${retrieved.sets.map((s) => s.id).join(', ')}');
-      }
 
       // Verify workout data
       expect(retrieved, isNotNull);
@@ -113,16 +105,10 @@ void main() {
       final workout2 = createTestWorkout(name: 'Workout 2');
 
       await db.insertWorkout(workout1);
-      print('Inserted Workout 1 with ID: ${workout1.id}');
       await db.insertWorkout(workout2);
-      print('Inserted Workout 2 with ID: ${workout2.id}');
 
       // Get all workouts
       final workouts = await db.getWorkouts();
-      print('Retrieved ${workouts.length} workouts from database');
-      for (var i = 0; i < workouts.length; i++) {
-        print('Workout $i: ID=${workouts[i].id}, Name=${workouts[i].name}');
-      }
 
       // Verify we can find at least one of our test workouts (relaxed assertion)
       expect(workouts.isNotEmpty, isTrue,

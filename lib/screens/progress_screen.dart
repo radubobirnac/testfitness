@@ -755,40 +755,32 @@ class _ProgressScreenState extends State<ProgressScreen> {
                     'Paste your StrengthWave JSON backup below. Import will merge data by ID.',
                   ),
                   const SizedBox(height: 12),
-                  Column(
-                    children: [
-                      RadioListTile<ImportMode>(
-                        title: const Text('Merge (recommended)'),
-                        value: ImportMode.merge,
-                        groupValue: selectedMode,
-                        onChanged: isImporting
-                            ? null
-                            : (value) {
-                                if (value == null) return;
-                                setDialogState(() {
-                                  selectedMode = value;
-                                  preview = null;
-                                });
-                              },
-                      ),
-                      RadioListTile<ImportMode>(
-                        title: const Text('Replace all data'),
-                        subtitle: const Text(
-                          'Deletes existing workouts and exercises first',
+                  RadioGroup<ImportMode>(
+                    groupValue: selectedMode,
+                    onChanged: (value) {
+                      if (isImporting || value == null) return;
+                      setDialogState(() {
+                        selectedMode = value;
+                        preview = null;
+                      });
+                    },
+                    child: Column(
+                      children: [
+                        RadioListTile<ImportMode>(
+                          title: const Text('Merge (recommended)'),
+                          value: ImportMode.merge,
+                          enabled: !isImporting,
                         ),
-                        value: ImportMode.replaceAll,
-                        groupValue: selectedMode,
-                        onChanged: isImporting
-                            ? null
-                            : (value) {
-                                if (value == null) return;
-                                setDialogState(() {
-                                  selectedMode = value;
-                                  preview = null;
-                                });
-                              },
-                      ),
-                    ],
+                        RadioListTile<ImportMode>(
+                          title: const Text('Replace all data'),
+                          subtitle: const Text(
+                            'Deletes existing workouts and exercises first',
+                          ),
+                          value: ImportMode.replaceAll,
+                          enabled: !isImporting,
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -948,7 +940,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 Column(
                   children: [
                     DropdownButtonFormField<CsvImportProfile>(
-                      value: selectedProfile,
+                      initialValue: selectedProfile,
                       decoration: const InputDecoration(
                         labelText: 'CSV format',
                         border: OutlineInputBorder(),
@@ -987,38 +979,33 @@ class _ProgressScreenState extends State<ProgressScreen> {
                             },
                     ),
                     const SizedBox(height: 8),
-                    RadioListTile<ImportMode>(
-                      title: const Text('Merge (recommended)'),
-                      value: ImportMode.merge,
+                    RadioGroup<ImportMode>(
                       groupValue: selectedMode,
-                      onChanged: isImporting
-                          ? null
-                          : (value) {
-                              if (value == null) return;
-                              setDialogState(() {
-                                selectedMode = value;
-                                preview = null;
-                                pendingImport = null;
-                              });
-                            },
-                    ),
-                    RadioListTile<ImportMode>(
-                      title: const Text('Replace all data'),
-                      subtitle: const Text(
-                        'Deletes existing workouts and exercises first',
+                      onChanged: (value) {
+                        if (isImporting || value == null) return;
+                        setDialogState(() {
+                          selectedMode = value;
+                          preview = null;
+                          pendingImport = null;
+                        });
+                      },
+                      child: Column(
+                        children: [
+                          RadioListTile<ImportMode>(
+                            title: const Text('Merge (recommended)'),
+                            value: ImportMode.merge,
+                            enabled: !isImporting,
+                          ),
+                          RadioListTile<ImportMode>(
+                            title: const Text('Replace all data'),
+                            subtitle: const Text(
+                              'Deletes existing workouts and exercises first',
+                            ),
+                            value: ImportMode.replaceAll,
+                            enabled: !isImporting,
+                          ),
+                        ],
                       ),
-                      value: ImportMode.replaceAll,
-                      groupValue: selectedMode,
-                      onChanged: isImporting
-                          ? null
-                          : (value) {
-                              if (value == null) return;
-                              setDialogState(() {
-                                selectedMode = value;
-                                preview = null;
-                                pendingImport = null;
-                              });
-                            },
                     ),
                   ],
                 ),
@@ -1191,7 +1178,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
       mode: mode,
     );
 
-    if (context.mounted) {
+    if (mounted) {
       context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
       context.read<ExerciseBloc>().add(const ExerciseLoadRequested());
       await _showImportSummary(result, mode, backupPath);
