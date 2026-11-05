@@ -197,6 +197,8 @@ class WorkoutRepository {
       completedDate: null,
       // Copy all sets but reset their completion status and create new IDs
       sets: originalWorkout.sets
+          // Keep warm-up and superset structure; a repeat is a new session,
+          // so completion and effort ratings are cleared.
           .map((set) => WorkoutSet(
                 id: 'set_${DateTime.now().millisecondsSinceEpoch}_${originalWorkout.sets.indexOf(set)}',
                 exerciseId: set.exerciseId,
@@ -206,6 +208,8 @@ class WorkoutRepository {
                 completedAt: null,
                 restTimeSeconds: set.restTimeSeconds,
                 notes: set.notes,
+                isWarmup: set.isWarmup,
+                supersetGroup: set.supersetGroup,
               ))
           .toList(),
       durationMinutes: null,

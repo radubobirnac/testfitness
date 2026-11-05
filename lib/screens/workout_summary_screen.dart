@@ -45,7 +45,11 @@ class _ExerciseBest {
   final WorkoutSet set;
   final int setCount;
 
-  const _ExerciseBest(this.exerciseId, this.set, this.setCount);
+  /// Average RPE of the rated working sets, null when none was rated.
+  final double? averageRpe;
+
+  const _ExerciseBest(this.exerciseId, this.set, this.setCount,
+      [this.averageRpe]);
 }
 
 class _WorkoutSummaryScreenState extends State<WorkoutSummaryScreen> {
@@ -78,7 +82,14 @@ class _WorkoutSummaryScreenState extends State<WorkoutSummaryScreen> {
       }
     }
     _bests = [
-      for (final id in order) _ExerciseBest(id, best[id]!, counts[id]!),
+      for (final id in order)
+        _ExerciseBest(
+          id,
+          best[id]!,
+          counts[id]!,
+          ProgressionCoach.averageRpe(
+              _doneSets.where((s) => s.exerciseId == id)),
+        ),
     ];
 
     List<PersonalRecord> records;
@@ -103,9 +114,8 @@ class _WorkoutSummaryScreenState extends State<WorkoutSummaryScreen> {
         if (at != null && (start == null || at.isBefore(start))) start = at;
       }
     }
-    _duration = (start != null && !end.isBefore(start))
-        ? end.difference(start)
-        : null;
+    _duration =
+        (start != null && !end.isBefore(start)) ? end.difference(start) : null;
 
     if (_records.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -132,6 +142,13 @@ class _WorkoutSummaryScreenState extends State<WorkoutSummaryScreen> {
   String _formatSet(WorkoutSet set) {
     if (set.weight <= 0) return '×${set.reps}';
     return '${_formatNumber(set.weight)} $_unit × ${set.reps}';
+  }
+
+  /// " · avg RPE 8.5" (one decimal at most), or '' when not rated.
+  static String _formatAverageRpe(double? rpe) {
+    if (rpe == null) return '';
+    final rounded = (rpe * 10).round() / 10;
+    return ' · avg RPE ${ProgressionCoach.formatNumber(rounded)}';
   }
 
   static String _formatDuration(Duration d) {
@@ -303,7 +320,8 @@ class _WorkoutSummaryScreenState extends State<WorkoutSummaryScreen> {
                         ),
                         subtitle: Text(
                           '${_bests[i].setCount} '
-                          '${_bests[i].setCount == 1 ? 'set' : 'sets'}',
+                          '${_bests[i].setCount == 1 ? 'set' : 'sets'}'
+                          '${_formatAverageRpe(_bests[i].averageRpe)}',
                         ),
                         trailing: Text(
                           _formatSet(_bests[i].set),

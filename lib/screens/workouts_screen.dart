@@ -12,6 +12,7 @@ import 'package:testfitness/models/workout_set.dart';
 import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
 import 'package:testfitness/screens/routines_screen.dart';
+import 'package:testfitness/screens/workout_calendar_screen.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/services/ai_workout_generator.dart';
 import 'package:testfitness/services/progression_coach.dart';
@@ -441,6 +442,16 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
             appBar: AppBar(
               title: const Text('Workouts'),
               actions: [
+                IconButton(
+                  icon: const Icon(Icons.calendar_month),
+                  tooltip: 'Calendar',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const WorkoutCalendarScreen(),
+                    ),
+                  ),
+                ),
                 IconButton(
                   icon: const Icon(Icons.refresh),
                   onPressed: _onRefreshPressed,

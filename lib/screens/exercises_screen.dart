@@ -5,6 +5,7 @@ import 'package:testfitness/blocs/exercise/exercise_event.dart';
 import 'package:testfitness/blocs/exercise/exercise_state.dart';
 import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
+import 'package:testfitness/screens/exercise_history_screen.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
 
@@ -335,8 +336,25 @@ class _ExercisesScreenState extends State<ExercisesScreen> {
                   ),
                   child: ListTile(
                     title: Text(exercise.name),
-                    subtitle: Text(exercise.category ?? ''),
-                    trailing: Text(exercise.muscleGroup ?? ''),
+                    subtitle: Text([
+                      if ((exercise.category ?? '').isNotEmpty)
+                        exercise.category!,
+                      if ((exercise.muscleGroup ?? '').isNotEmpty)
+                        exercise.muscleGroup!,
+                    ].join(' · ')),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.history),
+                      tooltip: 'History',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                ExerciseHistoryScreen(exercise: exercise),
+                          ),
+                        );
+                      },
+                    ),
                     onTap: () {
                       Navigator.push(
                         context,

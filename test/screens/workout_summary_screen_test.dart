@@ -119,6 +119,37 @@ void main() {
     expect(find.byKey(const ValueKey('summary-records')), findsNothing);
   });
 
+  testWidgets('shows average RPE per exercise only when rated',
+      (tester) async {
+    await setPhoneSize(tester);
+    final rated = Workout(
+      id: 'w4',
+      name: 'Rated',
+      completedDate: finish,
+      isCompleted: true,
+      sets: [
+        set('r1', 'bench', 60, 8, at: finish).copyWith(rpe: 8),
+        set('r2', 'bench', 60, 8, at: finish).copyWith(rpe: 9),
+        set('r3', 'bench', 60, 8, at: finish),
+        set('r4', 'pullup', 0, 10, at: finish),
+      ],
+    );
+    await tester.pumpWidget(app(
+      brightness: Brightness.dark,
+      home: WorkoutSummaryScreen(
+        workout: rated,
+        allWorkouts: [rated],
+        exerciseNames: const {'bench': 'Bench Press', 'pullup': 'Pull-up'},
+        useMetric: true,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('3 sets · avg RPE 8.5'), findsOneWidget);
+    expect(find.text('1 set'), findsOneWidget);
+  });
+
   testWidgets('Done returns to the first route', (tester) async {
     await setPhoneSize(tester);
     await tester.pumpWidget(app(

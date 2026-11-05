@@ -12,16 +12,22 @@ class RoutineExercise {
   /// null = use the coach / last session (falling back to 8).
   final int? reps;
 
+  /// Superset id shared with the neighbouring exercises done back to back;
+  /// null = not in a superset. Re-generated each time the routine is started.
+  final String? supersetGroup;
+
   const RoutineExercise({
     required this.exerciseId,
     required this.sets,
     this.reps,
+    this.supersetGroup,
   });
 
   Map<String, dynamic> toJson() => {
         'exerciseId': exerciseId,
         'sets': sets,
         if (reps != null) 'reps': reps,
+        if (supersetGroup != null) 'supersetGroup': supersetGroup,
       };
 
   factory RoutineExercise.fromJson(Map<String, dynamic> json) {
@@ -31,6 +37,7 @@ class RoutineExercise {
       exerciseId: (json['exerciseId'] ?? '').toString(),
       sets: sets is num && sets > 0 ? sets.toInt() : 3,
       reps: reps is num && reps > 0 ? reps.toInt() : null,
+      supersetGroup: WorkoutSet.parseSupersetGroup(json['supersetGroup']),
     );
   }
 
@@ -39,10 +46,11 @@ class RoutineExercise {
       other is RoutineExercise &&
       other.exerciseId == exerciseId &&
       other.sets == sets &&
-      other.reps == reps;
+      other.reps == reps &&
+      other.supersetGroup == supersetGroup;
 
   @override
-  int get hashCode => Object.hash(exerciseId, sets, reps);
+  int get hashCode => Object.hash(exerciseId, sets, reps, supersetGroup);
 
   @override
   String toString() => 'RoutineExercise($exerciseId, $sets × ${reps ?? '-'})';
@@ -83,12 +91,14 @@ class Routine {
         'name': name,
         'exercises': exercises.map((e) => e.toJson()).toList(),
         'createdAt': createdAt.millisecondsSinceEpoch,
-        if (lastUsedAt != null) 'lastUsedAt': lastUsedAt!.millisecondsSinceEpoch,
+        if (lastUsedAt != null)
+          'lastUsedAt': lastUsedAt!.millisecondsSinceEpoch,
       };
 
   factory Routine.fromJson(Map<String, dynamic> json) {
-    DateTime? date(Object? value) =>
-        value is num ? DateTime.fromMillisecondsSinceEpoch(value.toInt()) : null;
+    DateTime? date(Object? value) => value is num
+        ? DateTime.fromMillisecondsSinceEpoch(value.toInt())
+        : null;
 
     final rawExercises = json['exercises'];
     return Routine(
@@ -97,7 +107,8 @@ class Routine {
       exercises: rawExercises is List
           ? rawExercises
               .whereType<Map>()
-              .map((e) => RoutineExercise.fromJson(Map<String, dynamic>.from(e)))
+              .map(
+                  (e) => RoutineExercise.fromJson(Map<String, dynamic>.from(e)))
               .where((e) => e.exerciseId.isNotEmpty)
               .toList()
           : const [],
@@ -108,13 +119,17 @@ class Routine {
 
   /// Builds a routine from [w]: one entry per exercise in the order it was
   /// first logged, counting that exercise's working sets (warm-ups excluded).
-  /// The rep goal is the first working set's reps.
+  /// The rep goal is the first working set's reps. Supersets (consecutive
+  /// exercises sharing a group) are kept.
   static Routine fromWorkout(Workout w, {required String name}) {
     final order = <String>[];
     final counts = <String, int>{};
     final reps = <String, int>{};
+    final groupOf = <String, String?>{};
     for (final set in w.sets) {
-      if (set.isWarmup || set.exerciseId.isEmpty) continue;
+      if (set.exerciseId.isEmpty) continue;
+      groupOf[set.exerciseId] ??= set.supersetGroup;
+      if (set.isWarmup) continue;
       if (!counts.containsKey(set.exerciseId)) {
         order.add(set.exerciseId);
         counts[set.exerciseId] = 0;
@@ -122,12 +137,18 @@ class Routine {
       }
       counts[set.exerciseId] = counts[set.exerciseId]! + 1;
     }
+    final groups = Supersets.normalize(order, groupOf);
     return Routine(
       id: const Uuid().v4(),
       name: name,
       exercises: [
         for (final id in order)
-          RoutineExercise(exerciseId: id, sets: counts[id]!, reps: reps[id]),
+          RoutineExercise(
+            exerciseId: id,
+            sets: counts[id]!,
+            reps: reps[id],
+            supersetGroup: groups[id],
+          ),
       ],
       createdAt: DateTime.now(),
     );
@@ -135,7 +156,8 @@ class Routine {
 
   /// A new, unsaved workout for today with `sets` uncompleted sets per
   /// exercise. Weight/reps come from the coach's target, else the last
-  /// session's top set, else 0 × (reps ?? 8).
+  /// session's top set, else 0 × (reps ?? 8). Supersets are re-applied
+  /// with fresh group ids.
   Workout toWorkout(
     List<Workout> history, {
     required bool useMetric,
@@ -143,8 +165,17 @@ class Routine {
   }) {
     final coach = ProgressionCoach(useMetric: useMetric);
     final today = now ?? DateTime.now();
+    final groups = Supersets.normalize(
+      [for (final e in exercises) e.exerciseId],
+      {for (final e in exercises) e.exerciseId: e.supersetGroup},
+    );
+    final freshIds = <String, String>{};
     final sets = <WorkoutSet>[];
     for (final e in exercises) {
+      final oldGroup = groups[e.exerciseId];
+      final group = oldGroup == null
+          ? null
+          : freshIds.putIfAbsent(oldGroup, () => const Uuid().v4());
       double weight;
       int reps;
       final target = coach.target(e.exerciseId, history);
@@ -161,6 +192,7 @@ class Routine {
           exerciseId: e.exerciseId,
           reps: reps,
           weight: weight,
+          supersetGroup: group,
         ));
       }
     }

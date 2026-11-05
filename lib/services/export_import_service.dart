@@ -15,6 +15,7 @@ import 'package:testfitness/services/database_service_factory.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/services/database_interface.dart';
 import 'package:testfitness/services/exercise_seed_service.dart';
+import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:uuid/uuid.dart';
 
@@ -71,7 +72,7 @@ class ExportImportService {
 
       // CSV Header
       buffer.writeln(
-          'Date,Workout Name,Exercise ID,Exercise Name,Muscle Group,Category,Sets,Reps,Weight,Duration (min),Completed,Warmup');
+          'Date,Workout Name,Exercise ID,Exercise Name,Muscle Group,Category,Sets,Reps,Weight,Duration (min),Completed,Warmup,RPE,Superset');
 
       for (final workout in workouts) {
         final dateStr = workout.completedDate != null
@@ -81,42 +82,44 @@ class ExportImportService {
 
         if (workout.sets.isEmpty) {
           // Workout with no sets
-          buffer.writeln(
-              <String>[
-                dateStr,
-                workout.name,
-                '',
-                'No exercises',
-                '',
-                '',
-                '0',
-                '0',
-                '0',
-                '${workout.durationMinutes ?? 0}',
-                '${workout.isCompleted}',
-                'false',
-              ].map(_escapeCsv).join(','));
+          buffer.writeln(<String>[
+            dateStr,
+            workout.name,
+            '',
+            'No exercises',
+            '',
+            '',
+            '0',
+            '0',
+            '0',
+            '${workout.durationMinutes ?? 0}',
+            '${workout.isCompleted}',
+            'false',
+            '',
+            '',
+          ].map(_escapeCsv).join(','));
         } else {
           for (final set in workout.sets) {
             final exercise = exerciseById[set.exerciseId];
             final exerciseName = exercise?.name ?? set.exerciseId;
             final muscleGroup = exercise?.muscleGroup ?? '';
             final category = exercise?.category ?? '';
-            buffer.writeln(
-<String>[
-                  dateStr,
-                  workout.name,
-                  set.exerciseId,
-                  exerciseName,
-                  muscleGroup,
-                  category,
-                  '1',
-                  '${set.reps}',
-                  '${set.weight}',
-                  '${workout.durationMinutes ?? 0}',
-                  '${workout.isCompleted}',
-                  '${set.isWarmup}',
-                ].map(_escapeCsv).join(','));
+            buffer.writeln(<String>[
+              dateStr,
+              workout.name,
+              set.exerciseId,
+              exerciseName,
+              muscleGroup,
+              category,
+              '1',
+              '${set.reps}',
+              '${set.weight}',
+              '${workout.durationMinutes ?? 0}',
+              '${workout.isCompleted}',
+              '${set.isWarmup}',
+              set.rpe == null ? '' : ProgressionCoach.formatNumber(set.rpe!),
+              set.supersetGroup ?? '',
+            ].map(_escapeCsv).join(','));
           }
         }
       }
@@ -307,16 +310,14 @@ class ExportImportService {
 
       // Parse workouts
       final workoutsList = data['workouts'] as List<dynamic>;
-      final workouts = workoutsList
-          .map((w) {
-            final workoutMap = w as Map<String, dynamic>;
-            final setsList = workoutMap['sets'] as List<dynamic>? ?? [];
-            final sets = setsList
-                .map((s) => WorkoutSet.fromMap(s as Map<String, dynamic>))
-                .toList();
-            return Workout.fromMap(workoutMap, sets);
-          })
-          .toList();
+      final workouts = workoutsList.map((w) {
+        final workoutMap = w as Map<String, dynamic>;
+        final setsList = workoutMap['sets'] as List<dynamic>? ?? [];
+        final sets = setsList
+            .map((s) => WorkoutSet.fromMap(s as Map<String, dynamic>))
+            .toList();
+        return Workout.fromMap(workoutMap, sets);
+      }).toList();
 
       // Parse exercises
       final exercisesList = data['exercises'] as List<dynamic>? ?? [];
@@ -394,12 +395,12 @@ class ExportImportService {
         final durationMinutes = _parseInt(values['durationmin']);
 
         final exerciseId = values['exerciseid'];
-        final exerciseName =
-            values['exercisename'] ?? values['exercise'] ?? '';
+        final exerciseName = values['exercisename'] ?? values['exercise'] ?? '';
         final muscleGroup = values['musclegroup'] ?? values['muscle'] ?? '';
         final category = values['category'] ?? 'Imported';
 
-        if (exerciseName.isEmpty && (exerciseId == null || exerciseId.isEmpty)) {
+        if (exerciseName.isEmpty &&
+            (exerciseId == null || exerciseId.isEmpty)) {
           continue;
         }
 
@@ -466,6 +467,8 @@ class ExportImportService {
             completedAt: completed ? date : null,
             notes: setOrder != null ? 'set_order:$setOrder' : null,
             isWarmup: isWarmup,
+            rpe: WorkoutSet.parseRpe(values['rpe']),
+            supersetGroup: WorkoutSet.parseSupersetGroup(values['superset']),
           ),
         );
       }
@@ -558,8 +561,7 @@ class ExportImportService {
     // storage (FitnessGoal is not saved by any repository/database yet).
 
     if (result.userPreferences.isNotEmpty) {
-      await UserPreferencesService()
-          .applyPreferences(result.userPreferences);
+      await UserPreferencesService().applyPreferences(result.userPreferences);
     }
 
     await ExerciseSeedService.ensureDefaultExercises(db);
@@ -657,9 +659,8 @@ class ExportImportService {
   ) {
     final mapping = _profileHeaderMapping(profile);
     return headers.map((header) {
-      final normalized = header
-          .toLowerCase()
-          .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+      final normalized =
+          header.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
       return mapping[normalized] ?? _normalizeHeader(normalized);
     }).toList();
   }
@@ -700,6 +701,8 @@ class ExportImportService {
 
   static String _normalizeHeader(String normalized) {
     if (normalized.contains('warmup')) return 'warmup';
+    if (normalized == 'rpe') return 'rpe';
+    if (normalized.contains('superset')) return 'superset';
     if (normalized == 'settype') return 'settype';
     if (normalized.contains('workoutdate')) return 'date';
     if (normalized.contains('workoutname') || normalized == 'workout') {

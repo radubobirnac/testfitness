@@ -339,7 +339,8 @@ class ProgressionCoach {
 
     // Bodyweight: add a rep.
     if (w <= 0) {
-      final maxReps = last.sets.map((s) => s.reps).reduce((a, b) => a > b ? a : b);
+      final maxReps =
+          last.sets.map((s) => s.reps).reduce((a, b) => a > b ? a : b);
       final reps = maxReps + 1;
       return ProgressionTarget(
         weight: 0,
@@ -351,23 +352,52 @@ class ProgressionCoach {
       );
     }
 
-    if (_shouldDeload(sessions)) {
+    final stalled = _shouldDeload(sessions);
+    final grinding = !stalled && _shouldDeloadForEffort(sessions);
+    if (stalled || grinding) {
       var deloadWeight = roundToStep(w * 0.9);
       if (deloadWeight >= w) deloadWeight = roundToStep(w - weightStep);
+      final lighter = 'take a lighter week at '
+          '${formatWeight(deloadWeight)} × $goal, then build back up.';
       return ProgressionTarget(
         weight: deloadWeight,
         reps: goal,
         reason: TargetReason.deload,
         weightDelta: deloadWeight - w,
         repsDelta: 0,
-        message: 'Stalled for 3 sessions — take a lighter week at '
-            '${formatWeight(deloadWeight)} × $goal, then build back up.',
+        message: stalled
+            ? 'Stalled for 3 sessions — $lighter'
+            : 'Two all-out sessions in a row (RPE 9.5+) without progress — '
+                '$lighter',
       );
     }
 
     if (_hitAllWorkingSets(last)) {
-      var next = roundToStep(w + weightStep);
-      if (next <= w) next = roundToStep(w + 2 * weightStep);
+      final rpes = working.map((s) => s.rpe).toList();
+      final rated = rpes.whereType<double>().toList();
+      final hardest =
+          rated.isEmpty ? null : rated.reduce((a, b) => a > b ? a : b);
+
+      // A grinder: reps were hit but only just. Own the weight first.
+      if (hardest != null && hardest >= 9.5) {
+        final repeatWeight = roundToStep(w);
+        return ProgressionTarget(
+          weight: repeatWeight,
+          reps: goal,
+          reason: TargetReason.repeat,
+          weightDelta: repeatWeight - w,
+          repsDelta: 0,
+          message: 'Last time was a grinder (RPE ${formatNumber(hardest)}) — '
+              'repeat the weight and own it.',
+        );
+      }
+
+      // Every working set rated RPE 7 or easier: take a double step.
+      final easy =
+          rated.length == rpes.length && hardest != null && hardest <= 7;
+      final steps = easy ? 2 : 1;
+      var next = roundToStep(w + steps * weightStep);
+      if (next <= w) next = roundToStep(w + (steps + 1) * weightStep);
       final delta = next - w;
       return ProgressionTarget(
         weight: next,
@@ -375,8 +405,11 @@ class ProgressionCoach {
         reason: TargetReason.increaseWeight,
         weightDelta: delta,
         repsDelta: 0,
-        message: 'Hit $goal reps on every set last time — '
-            'add ${formatWeight(delta)}.',
+        message: easy
+            ? 'Hit $goal reps on every set at RPE ${formatNumber(hardest)} '
+                'or easier — that was light, add ${formatWeight(delta)}.'
+            : 'Hit $goal reps on every set last time — '
+                'add ${formatWeight(delta)}.',
       );
     }
 
@@ -422,6 +455,27 @@ class ProgressionCoach {
     return true;
   }
 
+  /// Average RPE of the rated sets in [sets], or null when none is rated.
+  static double? averageRpe(Iterable<WorkoutSet> sets) {
+    final rated = sets.map((s) => s.rpe).whereType<double>().toList();
+    if (rated.isEmpty) return null;
+    return rated.reduce((a, b) => a + b) / rated.length;
+  }
+
+  /// The last 2 sessions both averaged RPE >= 9.5 (over their rated sets) and
+  /// the newest did not improve best e1RM by > 1% over the one before.
+  bool _shouldDeloadForEffort(List<SessionSummary> newestFirst) {
+    if (newestFirst.length < 2) return false;
+    final newest = newestFirst[0];
+    final previous = newestFirst[1];
+    if (newest.topSet.weight <= 0) return false;
+    for (final session in [newest, previous]) {
+      final avg = averageRpe(session.sets);
+      if (avg == null || avg < 9.5) return false;
+    }
+    return newest.bestE1rm <= previous.bestE1rm * 1.01;
+  }
+
   // ---------------------------------------------------------------------------
   // Trends
   // ---------------------------------------------------------------------------
@@ -443,9 +497,8 @@ class ProgressionCoach {
 
     double? change;
     if (points.length >= 2 && points.first.value > 0) {
-      change = (points.last.value - points.first.value) /
-          points.first.value *
-          100;
+      change =
+          (points.last.value - points.first.value) / points.first.value * 100;
     }
 
     var plateau = false;
@@ -522,13 +575,15 @@ class ProgressionCoach {
           }
         }
         if (sessionSets.isNotEmpty) {
-          final v = sessionSets.fold<double>(0, (a, s) => a + s.weight * s.reps);
+          final v =
+              sessionSets.fold<double>(0, (a, s) => a + s.weight * s.reps);
           if (prevVolume == null || v > prevVolume) prevVolume = v;
         }
       }
       final hasHistory = previousSets.isNotEmpty;
 
-      final summary = _buildSummary(workout.id, refDate ?? DateTime(0), current);
+      final summary =
+          _buildSummary(workout.id, refDate ?? DateTime(0), current);
 
       // Best e1RM.
       double? prevE1rm;
@@ -572,8 +627,7 @@ class ProgressionCoach {
       }
 
       // Most volume in a single session.
-      if (summary.volume > 0 &&
-          (!hasHistory || summary.volume > prevVolume!)) {
+      if (summary.volume > 0 && (!hasHistory || summary.volume > prevVolume!)) {
         records.add(PersonalRecord(
           exerciseId: exerciseId,
           type: RecordType.mostVolume,
@@ -681,15 +735,14 @@ class ProgressionCoach {
     final neglected = monthGroups.difference(recentGroups).toList()..sort();
 
     // Records this week.
-    final weekWorkouts = workouts
-        .where((w) => workoutIdsThisWeek.contains(w.id))
-        .toList()
-      ..sort((a, b) {
-        final da = _earliestDate(a) ?? weekStart;
-        final db = _earliestDate(b) ?? weekStart;
-        final c = da.compareTo(db);
-        return c != 0 ? c : a.id.compareTo(b.id);
-      });
+    final weekWorkouts =
+        workouts.where((w) => workoutIdsThisWeek.contains(w.id)).toList()
+          ..sort((a, b) {
+            final da = _earliestDate(a) ?? weekStart;
+            final db = _earliestDate(b) ?? weekStart;
+            final c = da.compareTo(db);
+            return c != 0 ? c : a.id.compareTo(b.id);
+          });
     final records = <PersonalRecord>[];
     for (final workout in weekWorkouts) {
       final dateBySetId = {
@@ -816,7 +869,8 @@ class ProgressionCoach {
       final prev = lastTrained[id];
       if (prev == null || d.date.isAfter(prev)) lastTrained[id] = d.date;
       final exercise = byId[id];
-      final groups = exercise == null ? const <String>[] : muscleGroupsOf(exercise);
+      final groups =
+          exercise == null ? const <String>[] : muscleGroupsOf(exercise);
       if (d.date.isAfter(recoveryCutoff)) {
         recentExerciseIds.add(id);
         recentGroups.addAll(groups);
@@ -892,7 +946,8 @@ class ProgressionCoach {
         reps = last?.topSet.reps ?? 8;
       }
       for (var i = 0; i < 3; i++) {
-        sets.add(WorkoutSet.create(exerciseId: e.id, reps: reps, weight: weight));
+        sets.add(
+            WorkoutSet.create(exerciseId: e.id, reps: reps, weight: weight));
       }
     }
     for (final e in fillers) {

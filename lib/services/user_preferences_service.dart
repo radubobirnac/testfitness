@@ -1,6 +1,10 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/utils/app_logger.dart';
 
+/// Training experience the user picked during first-run setup. Informational
+/// for now (e.g. beginners get warm-up / RPE tips).
+enum ExperienceLevel { beginner, intermediate, advanced }
+
 /// Service for managing user preferences
 class UserPreferencesService {
   // Keys for preferences
@@ -13,6 +17,7 @@ class UserPreferencesService {
   static const String _barWeightLbKey = 'bar_weight_lb';
   static const String _availablePlatesKgKey = 'available_plates_kg';
   static const String _availablePlatesLbKey = 'available_plates_lb';
+  static const String _experienceLevelKey = 'experience_level';
 
   // Default values
   static const int _defaultRestTimerDuration = 90; // Default 90 seconds
@@ -278,6 +283,38 @@ class UserPreferencesService {
           sorted.map((p) => p.toString()).toList());
     } catch (e) {
       AppLogger.error('Error setting available plates', e);
+      return false;
+    }
+  }
+
+  /// Experience level chosen during first-run setup, or null if never set.
+  ExperienceLevel? getExperienceLevel() {
+    if (!_initialized) {
+      AppLogger.warning('UserPreferencesService not initialized');
+      return null;
+    }
+    try {
+      final stored = _prefs.getString(_experienceLevelKey);
+      for (final level in ExperienceLevel.values) {
+        if (level.name == stored) return level;
+      }
+      return null;
+    } catch (e) {
+      AppLogger.error('Error getting experience level', e);
+      return null;
+    }
+  }
+
+  /// Store the experience level chosen during first-run setup.
+  Future<bool> setExperienceLevel(ExperienceLevel level) async {
+    if (!_initialized) {
+      AppLogger.warning('UserPreferencesService not initialized');
+      return false;
+    }
+    try {
+      return await _prefs.setString(_experienceLevelKey, level.name);
+    } catch (e) {
+      AppLogger.error('Error setting experience level', e);
       return false;
     }
   }
