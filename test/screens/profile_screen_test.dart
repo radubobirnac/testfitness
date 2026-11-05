@@ -36,7 +36,7 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool('use_metric_units'), isTrue);
     expect(prefs.containsKey('rest_timer_duration'), isFalse);
-    expect(find.text('Kilograms (Kg)'), findsOneWidget);
+    expect(find.text('Kilograms (kg)'), findsOneWidget);
     expect(find.byKey(const ValueKey('weight-unit-note')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -44,6 +44,12 @@ void main() {
   testWidgets('smart rest switch reveals the global slider', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await pumpProfile(tester);
+
+    // Smart rest now lives in the Rest timer sheet.
+    expect(find.text('Smart · by exercise type'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('settings-rest-timer')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('Smart rest by exercise type'), findsOneWidget);
     expect(find.byKey(const ValueKey('global-rest-slider')), findsNothing);
@@ -64,7 +70,13 @@ void main() {
     });
     await pumpProfile(tester);
 
-    expect(find.text('Workout Suggestions'), findsOneWidget);
+    expect(find.text('Workout suggestions'), findsWidgets);
+    expect(find.text('Strength Focus · 2 body parts · 45 min'), findsOneWidget);
+
+    // The controls live on the Workout suggestions subpage.
+    await tester.tap(find.byKey(const ValueKey('settings-workout-suggestions')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Strength Focus'), findsOneWidget);
     expect(find.text('Enthusiasm Level: 3/5'), findsNothing);
     expect(find.text('Voice Emphasis'), findsNothing);

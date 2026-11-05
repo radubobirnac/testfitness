@@ -2,8 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/services/progression_coach.dart';
+import 'package:testfitness/ui/app_ui.dart';
+import 'package:testfitness/ui/progress_period.dart';
+import 'package:testfitness/ui/progress_widgets.dart';
 
-/// Coach-driven weekly summary shown at the top of the Progress screen.
+/// Coach-driven weekly summary shown under "This week" on the Progress tab:
+/// three stat tiles, a streak chip, then records, muscle groups, neglected
+/// groups and plateaus as short sub-sections.
 ///
 /// Purely presentational: callers compute the [WeeklyCheckIn] with
 /// `ProgressionCoach.weeklyCheckIn` and pass the user's weight unit label.
@@ -36,144 +41,131 @@ class WeeklyCheckInCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final c = checkIn;
-
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.insights, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Weekly check-in',
-                    style: theme.textTheme.titleLarge
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                if (c != null && c.streakWeeks > 0)
-                  _StreakBadge(weeks: c.streakWeeks),
-              ],
+    return ProgressCard(
+      child: !hasData(c)
+          ? const ProgressEmptyHint(
+              key: ValueKey('weekly_check_in_empty'),
+              icon: Icons.insights_outlined,
+              message: 'Log a workout and your weekly check-in appears here.',
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: _buildContent(context, c!),
             ),
-            const SizedBox(height: 12),
-            if (!hasData(c))
-              _buildEmptyState(theme)
-            else
-              ..._buildContent(context, c!),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(ThemeData theme) {
-    return Text(
-      'Log your first workout and your coach will check in here every week '
-      'with your volume, records and what to train next.',
-      key: const ValueKey('weekly_check_in_empty'),
-      style: theme.textTheme.bodyMedium
-          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
     );
   }
 
   List<Widget> _buildContent(BuildContext context, WeeklyCheckIn c) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final widgets = <Widget>[];
 
+    widgets.add(Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: Gap.sm,
+      runSpacing: Gap.xs,
+      children: [
+        Text(
+          'Week of ${DateFormat('MMM d').format(c.weekStart)}',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+        if (c.streakWeeks > 0) _StreakChip(weeks: c.streakWeeks),
+      ],
+    ));
+    widgets.add(const SizedBox(height: Gap.sm));
+
+    final change =
+        ProgressMath.changePercent(c.volumeThisWeek, c.volumeLastWeek);
+    widgets.add(ProgressStatRow(tiles: [
+      ProgressStatTile(label: 'Workouts', value: '${c.workoutsThisWeek}'),
+      ProgressStatTile(label: 'Sets', value: '${c.setsThisWeek}'),
+      ProgressStatTile(
+        label: 'Volume',
+        value: '${ProgressMath.formatVolume(c.volumeThisWeek)} $_unit',
+        change: change == null
+            ? null
+            : '${ProgressMath.formatChange(change)} vs last week',
+        changeUp: change == null ? null : change >= 0,
+      ),
+    ]));
+
     if (c.workoutsThisWeek == 0) {
-      widgets.add(Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Text(
-          'No workouts yet this week — a short session keeps the streak alive.',
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      widgets.add(const SizedBox(height: Gap.sm));
+      widgets.add(Text(
+        'No workouts yet this week — a short session keeps the streak alive.',
+        style: theme.textTheme.bodySmall
+            ?.copyWith(color: scheme.onSurfaceVariant),
+      ));
+    }
+
+    if (c.recordsThisWeek.isNotEmpty) {
+      widgets.add(_SubSection(
+        icon: Icons.emoji_events_outlined,
+        title: 'New records',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _recordLines(theme, c.recordsThisWeek),
         ),
       ));
     }
 
-    widgets.add(Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: _Metric(label: 'Workouts', value: '${c.workoutsThisWeek}'),
-        ),
-        Expanded(
-          child: _Metric(label: 'Sets', value: '${c.setsThisWeek}'),
-        ),
-        Expanded(
-          flex: 2,
-          child: _Metric(
-            label: 'Volume',
-            value: '${_formatVolume(c.volumeThisWeek)} $_unit',
-            trailing: _volumeChange(theme, c),
-          ),
-        ),
-      ],
-    ));
-
-    if (c.recordsThisWeek.isNotEmpty) {
-      widgets.add(const SizedBox(height: 16));
-      widgets.add(const _SectionTitle(
-          icon: Icons.emoji_events_outlined, text: 'New records this week'));
-      widgets.addAll(_recordLines(theme, c.recordsThisWeek));
-    }
-
     if (c.setsPerMuscleGroup.isNotEmpty) {
-      widgets.add(const SizedBox(height: 16));
-      widgets.add(const _SectionTitle(
-          icon: Icons.accessibility_new, text: 'Sets per muscle group'));
       final entries = c.setsPerMuscleGroup.entries.toList()
         ..sort((a, b) => b.value.compareTo(a.value));
-      widgets.add(Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: [
-          for (final e in entries)
-            _CountChip(label: _titleCase(e.key), count: e.value),
-        ],
+      widgets.add(_SubSection(
+        icon: Icons.accessibility_new,
+        title: 'Sets per muscle group',
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final e in entries)
+              _Pill(label: '${_titleCase(e.key)} · ${e.value}'),
+          ],
+        ),
       ));
     }
 
     if (c.neglectedMuscleGroups.isNotEmpty) {
-      widgets.add(const SizedBox(height: 16));
-      widgets.add(_Notice(
+      widgets.add(_SubSection(
         icon: Icons.schedule,
-        color: theme.colorScheme.tertiary,
-        text: 'Not trained in 7+ days: '
-            '${c.neglectedMuscleGroups.map(_titleCase).join(', ')}',
+        title: 'Not trained in 7+ days',
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final g in c.neglectedMuscleGroups)
+              _Pill(label: _titleCase(g), outlined: true),
+          ],
+        ),
       ));
     }
 
-    for (final trend in c.plateaus) {
-      widgets.add(const SizedBox(height: 8));
-      final name = exercisesById[trend.exerciseId]?.name ?? 'An exercise';
-      widgets.add(_Notice(
+    if (c.plateaus.isNotEmpty) {
+      widgets.add(_SubSection(
         icon: Icons.trending_flat,
-        color: theme.colorScheme.error,
-        text: '$name has stalled for 3 sessions — try a lighter week',
+        title: 'Plateaus',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final trend in c.plateaus)
+              Padding(
+                padding: const EdgeInsets.only(top: Gap.xs),
+                child: Text(
+                  '${exercisesById[trend.exerciseId]?.name ?? 'An exercise'} '
+                  'has stalled for 3 sessions — try a lighter week',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+          ],
+        ),
       ));
     }
 
     return widgets;
-  }
-
-  Widget? _volumeChange(ThemeData theme, WeeklyCheckIn c) {
-    final last = c.volumeLastWeek;
-    if (last == null || last <= 0) return null;
-    final pct = (c.volumeThisWeek - last) / last * 100;
-    final up = pct >= 0;
-    final color = up ? theme.colorScheme.primary : theme.colorScheme.error;
-    return Text(
-      '${up ? '↑' : '↓'} ${pct.abs().toStringAsFixed(0)}% vs last week',
-      style: theme.textTheme.labelSmall
-          ?.copyWith(color: color, fontWeight: FontWeight.w600),
-    );
   }
 
   List<Widget> _recordLines(ThemeData theme, List<PersonalRecord> records) {
@@ -186,16 +178,16 @@ class WeeklyCheckInCard extends StatelessWidget {
       final name = exercisesById[entry.key]?.name ?? 'Exercise';
       final parts = entry.value.map(_formatRecord).join(' · ');
       return Padding(
-        padding: const EdgeInsets.only(top: 4),
+        padding: const EdgeInsets.only(top: Gap.xs),
         child: Text.rich(
           TextSpan(children: [
+            TextSpan(text: '$name  ', style: theme.textTheme.titleSmall),
             TextSpan(
-              text: '$name  ',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+              text: parts,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
-            TextSpan(text: parts),
           ]),
-          style: theme.textTheme.bodyMedium,
         ),
       );
     }).toList();
@@ -208,7 +200,7 @@ class WeeklyCheckInCard extends StatelessWidget {
       case RecordType.heaviestWeight:
         return 'heaviest ${_formatWeight(r.value)} $_unit';
       case RecordType.mostVolume:
-        return 'volume ${_formatVolume(r.value)} $_unit';
+        return 'volume ${ProgressMath.formatVolume(r.value)} $_unit';
     }
   }
 
@@ -217,11 +209,6 @@ class WeeklyCheckInCard extends StatelessWidget {
     return rounded == rounded.roundToDouble()
         ? rounded.toStringAsFixed(0)
         : rounded.toStringAsFixed(1);
-  }
-
-  static String _formatVolume(double v) {
-    if (v >= 100000) return NumberFormat.compact().format(v);
-    return NumberFormat.decimalPattern().format(v.round());
   }
 
   static String _titleCase(String s) {
@@ -233,25 +220,25 @@ class WeeklyCheckInCard extends StatelessWidget {
   }
 }
 
-class _StreakBadge extends StatelessWidget {
+class _StreakChip extends StatelessWidget {
   final int weeks;
-  const _StreakBadge({required this.weeks});
+  const _StreakChip({required this.weeks});
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: Gap.sm, vertical: Gap.xs),
       decoration: BoxDecoration(
         color: scheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(Gap.md),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.local_fire_department,
               size: 16, color: scheme.onSecondaryContainer),
-          const SizedBox(width: 4),
+          const SizedBox(width: Gap.xs),
           Text(
             '$weeks-week streak',
             style: Theme.of(context)
@@ -265,107 +252,64 @@ class _StreakBadge extends StatelessWidget {
   }
 }
 
-class _Metric extends StatelessWidget {
-  final String label;
-  final String value;
-  final Widget? trailing;
-  const _Metric({required this.label, required this.value, this.trailing});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: theme.textTheme.labelMedium
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 2),
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.centerLeft,
-          child: Text(
-            value,
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.bold),
-          ),
-        ),
-        if (trailing != null) trailing!,
-      ],
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
+/// Small titled block inside the card.
+class _SubSection extends StatelessWidget {
   final IconData icon;
-  final String text;
-  const _SectionTitle({required this.icon, required this.text});
+  final String title;
+  final Widget child;
+  const _SubSection(
+      {required this.icon, required this.title, required this.child});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
+      padding: const EdgeInsets.only(top: Gap.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: theme.colorScheme.primary),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              text,
-              style: theme.textTheme.titleSmall
-                  ?.copyWith(fontWeight: FontWeight.w600),
-            ),
+          Row(
+            children: [
+              Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  title,
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ],
           ),
+          const SizedBox(height: Gap.xs),
+          child,
         ],
       ),
     );
   }
 }
 
-class _CountChip extends StatelessWidget {
+class _Pill extends StatelessWidget {
   final String label;
-  final int count;
-  const _CountChip({required this.label, required this.count});
+  final bool outlined;
+  const _Pill({required this.label, this.outlined = false});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: Gap.xs),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(16),
+        color: outlined ? null : scheme.surfaceContainerHighest,
+        border: outlined ? Border.all(color: scheme.outline) : null,
+        borderRadius: BorderRadius.circular(Gap.lg),
       ),
       child: Text(
-        '$label · $count',
+        label,
         style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurface),
       ),
-    );
-  }
-}
-
-class _Notice extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String text;
-  const _Notice({required this.icon, required this.color, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(text, style: theme.textTheme.bodyMedium),
-        ),
-      ],
     );
   }
 }

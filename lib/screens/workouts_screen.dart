@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -7,24 +6,22 @@ import 'package:intl/intl.dart';
 import 'package:testfitness/blocs/workout/workout_bloc.dart';
 import 'package:testfitness/blocs/workout/workout_event.dart';
 import 'package:testfitness/blocs/workout/workout_state.dart';
-import 'package:testfitness/models/exercise.dart';
-import 'package:testfitness/models/routine.dart';
 import 'package:testfitness/models/workout.dart';
-import 'package:testfitness/models/workout_set.dart';
-import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/repositories/routine_repository.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
 import 'package:testfitness/screens/routines_screen.dart';
 import 'package:testfitness/screens/workout_calendar_screen.dart';
-import 'package:testfitness/services/ai_service.dart';
-import 'package:testfitness/services/ai_workout_generator.dart';
-import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/ui/app_ui.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
+import 'package:testfitness/widgets/start_workout_flow.dart';
 import 'package:testfitness/widgets/workout_card_skeleton.dart';
-import 'package:testfitness/widgets/workout_split_picker.dart';
+
+// The start sheet moved to start_workout_flow.dart; re-exported so existing
+// imports of this file keep working.
+export 'package:testfitness/widgets/start_workout_flow.dart'
+    show StartWorkoutOption, StartWorkoutSelection, StartWorkoutSheet;
 
 // ---------------------------------------------------------------------------
 // Pure helpers (grouping, sorting, formatting). Kept top-level so they can be
@@ -202,19 +199,6 @@ class WorkoutsScreen extends StatefulWidget {
 }
 
 class _WorkoutsScreenState extends State<WorkoutsScreen> {
-  static const List<String> _aiFocusOptions = [
-    'Full Body',
-    'Upper',
-    'Lower',
-    'Push',
-    'Pull',
-    'Legs',
-    'Chest',
-    'Back',
-    'Shoulders',
-    'Arms',
-    'Core',
-  ];
   static const String _importedFromCsvLabel = 'Imported from CSV';
 
   late final RoutineRepository _routineRepository =
@@ -223,11 +207,6 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
   bool _newestFirst = true;
   WorkoutFilter _filter = WorkoutFilter.all;
   bool _fabExtended = true;
-  bool _isGeneratingNext = false;
-  bool _isGeneratingAi = false;
-
-  /// Navigator showing the blocking progress dialog, if any.
-  NavigatorState? _progressNavigator;
 
   @override
   void initState() {
@@ -247,344 +226,6 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     });
   }
 
-  void _showProgressDialog(String message) {
-    _progressNavigator = Navigator.of(context, rootNavigator: true);
-    showDialog<void>(
-      context: context,
-      useRootNavigator: true,
-      barrierDismissible: false,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: Row(
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(width: Gap.lg),
-              Expanded(child: Text(message)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _hideProgressDialog() {
-    final navigator = _progressNavigator;
-    _progressNavigator = null;
-    if (navigator != null && navigator.mounted && navigator.canPop()) {
-      navigator.pop();
-    }
-  }
-
-  void _openEditorFor(Workout workout) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ExerciseDetailScreen.editWorkout(
-          workoutId: workout.id,
-        ),
-      ),
-    ).then((_) {
-      if (mounted) {
-        context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
-      }
-    });
-  }
-
-  Future<Workout> _buildNextWorkout(WorkoutState state) async {
-    try {
-      final aiService = AIService();
-      if (aiService.isAvailable) {
-        final aiGenerator = AIWorkoutGenerator();
-        return await aiGenerator.generateAIWorkout(
-          workoutName: 'Next Workout',
-          recentWorkouts: state.workouts,
-          lookbackDays: 14,
-        );
-      }
-      final reason = aiService.unavailableReason;
-      final workout = await _generateNextWorkoutFallback(state.workouts);
-      if (mounted) {
-        AnimatedFeedback.showSnackBar(
-          context,
-          '${reason ?? 'AI unavailable.'} Your coach built this workout from your history.',
-          backgroundColor: Colors.orange,
-        );
-      }
-      return workout;
-    } catch (error) {
-      AppLogger.warning('AI generation failed, falling back', error);
-      final workout = await _generateNextWorkoutFallback(state.workouts);
-      if (mounted) {
-        AnimatedFeedback.showSnackBar(
-          context,
-          'AI failed. Your coach built this workout from your history.',
-          backgroundColor: Colors.orange,
-        );
-      }
-      return workout;
-    }
-  }
-
-  Future<void> _createNextWorkout(WorkoutState state) async {
-    if (_isGeneratingNext) return;
-    setState(() {
-      _isGeneratingNext = true;
-    });
-    _showProgressDialog('Your coach is building your next workout...');
-
-    Workout? workout;
-    try {
-      workout = await _buildNextWorkout(state);
-    } catch (error) {
-      AppLogger.error('Could not create next workout', error);
-      if (mounted) {
-        AnimatedFeedback.showError(
-            context, 'Could not create a workout. Please try again.');
-      }
-    } finally {
-      _hideProgressDialog();
-      if (mounted) {
-        setState(() {
-          _isGeneratingNext = false;
-        });
-      }
-    }
-
-    if (!mounted || workout == null) return;
-    context.read<WorkoutBloc>().add(WorkoutCreateRequested(workout));
-    _openEditorFor(workout);
-  }
-
-  Future<Workout> _buildAiWorkout(String focus, WorkoutState state) async {
-    try {
-      final aiService = AIService();
-      if (!aiService.isAvailable) {
-        throw Exception('AI unavailable');
-      }
-
-      final aiGenerator = AIWorkoutGenerator();
-      final normalizedFocus = _formatFocusForPrompt(focus);
-      return await aiGenerator.generateAiWorkout(
-        workoutName: 'AI Build - $focus',
-        focus: normalizedFocus,
-        recentWorkouts: state.workouts,
-        lookbackDays: 21,
-        maxRecentWorkouts: 6,
-      );
-    } catch (error) {
-      AppLogger.warning('AI build failed, using fallback', error);
-      final reason = AIService().unavailableReason;
-      final workout = await _generateFocusWorkoutFallback(focus, state.workouts);
-      if (mounted) {
-        AnimatedFeedback.showSnackBar(
-          context,
-          '${reason ?? 'AI unavailable.'} Created a rules-based workout.',
-          backgroundColor: Colors.orange,
-        );
-      }
-      return workout;
-    }
-  }
-
-  Future<void> _createAiWorkout(WorkoutState state) async {
-    if (_isGeneratingAi) return;
-    final focus = await _showFocusPicker(context);
-    if (!mounted || focus == null) return;
-
-    setState(() {
-      _isGeneratingAi = true;
-    });
-    _showProgressDialog('AI is building your workout...');
-
-    Workout? workout;
-    try {
-      workout = await _buildAiWorkout(focus, state);
-    } catch (error) {
-      AppLogger.error('Could not create AI workout', error);
-      if (mounted) {
-        AnimatedFeedback.showError(
-            context, 'Could not create a workout. Please try again.');
-      }
-    } finally {
-      _hideProgressDialog();
-      if (mounted) {
-        setState(() {
-          _isGeneratingAi = false;
-        });
-      }
-    }
-
-    if (!mounted || workout == null) return;
-    context.read<WorkoutBloc>().add(WorkoutCreateRequested(workout));
-    _openEditorFor(workout);
-  }
-
-  List<String> _normalizeMuscleGroups(String? muscleGroup) {
-    if (muscleGroup == null || muscleGroup.trim().isEmpty) return [];
-    return muscleGroup
-        .split(',')
-        .map((group) => group.trim().toLowerCase())
-        .where((group) => group.isNotEmpty)
-        .toList();
-  }
-
-  Future<Workout> _generateNextWorkoutFallback(List<Workout> workouts) async {
-    final exerciseRepository = ExerciseRepository();
-    final allExercises = await exerciseRepository.getExercises();
-    final coach = ProgressionCoach(
-      useMetric: UserPreferencesService().getUseMetricUnits(),
-    );
-    return coach.suggestNextWorkout(workouts, allExercises,
-        preferences: WorkoutPreferences.fromMap(
-            UserPreferencesService().getWorkoutPreferences()));
-  }
-
-  Future<Workout> _generateFocusWorkoutFallback(
-    String focus,
-    List<Workout> workouts,
-  ) async {
-    final exerciseRepository = ExerciseRepository();
-    final allExercises = await exerciseRepository.getExercises();
-    final focusTargets = _focusTargetsForFallback(focus);
-
-    List<String> exerciseTags(Exercise exercise) {
-      final tags = <String>[];
-      tags.addAll(_normalizeMuscleGroups(exercise.muscleGroup));
-      tags.addAll(_normalizeMuscleGroups(exercise.category));
-      tags.add(exercise.name.toLowerCase());
-      return tags;
-    }
-
-    var candidates = allExercises;
-    if (focusTargets.isNotEmpty) {
-      candidates = allExercises.where((exercise) {
-        final tags = exerciseTags(exercise);
-        return tags.any((tag) =>
-            focusTargets.any((focusTarget) => tag.contains(focusTarget)));
-      }).toList();
-    }
-
-    if (candidates.isEmpty) {
-      candidates = allExercises;
-    }
-
-    candidates.shuffle(Random());
-    final selected = candidates.take(5).toList();
-
-    final sets = selected
-        .map((exercise) => WorkoutSet.create(
-              exerciseId: exercise.id,
-              reps: 8,
-              weight: 0,
-              isCompleted: false,
-            ))
-        .toList();
-
-    final notes = StringBuffer()
-      ..writeln('AI build fallback used.')
-      ..writeln('Focus: $focus')
-      ..writeln('Selected ${selected.length} exercises from focus groups.');
-
-    return Workout(
-      id: 'workout_${DateTime.now().millisecondsSinceEpoch}',
-      name: 'AI Build - $focus',
-      sets: sets,
-      scheduledDate: DateTime.now(),
-      isCompleted: false,
-      notes: notes.toString(),
-    );
-  }
-
-  List<String> _focusTargetsForFallback(String focus) {
-    final normalized = focus.toLowerCase();
-    if (normalized.contains('full')) {
-      return [];
-    }
-    if (normalized.contains('upper')) {
-      return ['chest', 'back', 'shoulder', 'arm'];
-    }
-    if (normalized.contains('lower')) {
-      return ['leg', 'quad', 'hamstring', 'glute'];
-    }
-    if (normalized.contains('push')) {
-      return ['chest', 'shoulder', 'tricep'];
-    }
-    if (normalized.contains('pull')) {
-      return ['back', 'bicep'];
-    }
-    if (normalized.contains('legs')) {
-      return ['leg', 'quad', 'hamstring', 'glute'];
-    }
-    if (normalized.contains('chest')) {
-      return ['chest', 'pec'];
-    }
-    if (normalized.contains('back')) {
-      return ['back', 'lat'];
-    }
-    if (normalized.contains('shoulders')) {
-      return ['shoulder', 'deltoid'];
-    }
-    if (normalized.contains('arms')) {
-      return ['arm', 'bicep', 'tricep'];
-    }
-    if (normalized.contains('core')) {
-      return ['core', 'abs'];
-    }
-    return [];
-  }
-
-  String _formatFocusForPrompt(String focus) {
-    switch (focus) {
-      case 'Full Body':
-        return 'full body';
-      case 'Upper':
-        return 'upper body';
-      case 'Lower':
-        return 'lower body';
-      default:
-        return focus.toLowerCase();
-    }
-  }
-
-  Future<String?> _showFocusPicker(BuildContext context) {
-    var selected = _aiFocusOptions.first;
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('AI Workout Focus'),
-        content: StatefulBuilder(
-          builder: (context, setModalState) => Wrap(
-            spacing: 8.0,
-            runSpacing: 8.0,
-            children: _aiFocusOptions.map((option) {
-              return ChoiceChip(
-                label: Text(option),
-                selected: selected == option,
-                onSelected: (isSelected) {
-                  if (!isSelected) return;
-                  setModalState(() {
-                    selected = option;
-                  });
-                },
-              );
-            }).toList(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(selected),
-            child: const Text('Build'),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// Pull-to-refresh: reloads and waits (bounded) for the load to finish.
   Future<void> _onRefreshPressed() async {
     AppLogger.debug('Refreshing workouts');
@@ -599,66 +240,11 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     }
   }
 
-  void _startEmptyWorkout() {
-    // Open the editor for a new (unsaved) workout dated today.
-    // It is persisted by autosave on the first completed set, so
-    // backing out does not leave an empty workout behind.
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ExerciseDetailScreen(),
-      ),
-    ).then((_) {
-      // Reload workouts after returning
-      if (mounted) {
-        context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
-      }
-    });
-  }
-
-  Future<void> _openStartSheet() async {
-    HapticFeedback.selectionClick();
-    List<Routine> routines = const [];
-    try {
-      routines = await _routineRepository.getRoutines();
-    } catch (e) {
-      AppLogger.warning('Could not load routines for start sheet', e);
-    }
-    if (!mounted) return;
-    final showAi = (widget.isAiAvailable ?? () => AIService().isAvailable)();
-
-    final selection = await showModalBottomSheet<StartWorkoutSelection>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => StartWorkoutSheet(
-        showAi: showAi,
-        routines: routines,
-        isGeneratingNext: _isGeneratingNext,
-        isGeneratingAi: _isGeneratingAi,
-      ),
-    );
-    if (!mounted || selection == null) return;
-
-    final workouts = context.read<WorkoutBloc>().state;
-    switch (selection.option) {
-      case StartWorkoutOption.empty:
-        _startEmptyWorkout();
-      case StartWorkoutOption.muscleGroup:
-        openWorkoutSplitPicker(context, workouts.workouts);
-      case StartWorkoutOption.coachNext:
-        _createNextWorkout(workouts);
-      case StartWorkoutOption.aiBuild:
-        _createAiWorkout(workouts);
-      case StartWorkoutOption.routine:
-        final routine = selection.routine;
-        if (routine != null) {
-          startRoutine(context, routine, workouts.workouts,
-              repository: _routineRepository);
-        }
-    }
-  }
+  void _openStartSheet() => showStartWorkoutFlow(
+        context,
+        isAiAvailable: widget.isAiAvailable,
+        routineRepository: _routineRepository,
+      );
 
   bool _onUserScroll(UserScrollNotification notification) {
     if (notification.metrics.axis != Axis.vertical) return false;
@@ -757,6 +343,11 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     ];
     final unitLabel =
         UserPreferencesService().getWeightUnitLabel().toLowerCase();
+    final overdue = [
+      for (final section in sections)
+        for (final w in section.workouts)
+          if (isWorkoutOverdue(w, now)) w,
+    ];
 
     return NotificationListener<UserScrollNotification>(
       onNotification: _onUserScroll,
@@ -783,7 +374,22 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
                     final entry = entries[index];
-                    if (entry is String) return SectionHeader(entry);
+                    if (entry is String) {
+                      if (entry == 'Planned' && overdue.isNotEmpty) {
+                        return SectionHeader(
+                          entry,
+                          trailing: TextButton(
+                            key: const Key('mark_overdue_done'),
+                            onPressed: () =>
+                                _confirmMarkOverdueDone(context, overdue),
+                            child: Text(overdue.length == 1
+                                ? 'Mark overdue done'
+                                : 'Mark ${overdue.length} overdue done'),
+                          ),
+                        );
+                      }
+                      return SectionHeader(entry);
+                    }
                     return _buildCard(
                         context, entry as Workout, now, unitLabel);
                   },
@@ -861,6 +467,73 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     );
   }
 
+  /// Overdue workout ticked off: ask whether it was done on its planned day
+  /// (backdated, sets included) or today.
+  Future<void> _askWhenDone(BuildContext context, Workout workout) async {
+    final plannedDay = formatWorkoutDate(workout.plannedCompletionTime);
+    final choice = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('When did you do it?'),
+        children: [
+          SimpleDialogOption(
+            key: const Key('done_on_planned_day'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: Gap.sm),
+              child: Text('On its planned day ($plannedDay)'),
+            ),
+          ),
+          SimpleDialogOption(
+            key: const Key('done_today'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: Gap.sm),
+              child: Text('Today'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    context.read<WorkoutBloc>().add(choice
+        ? WorkoutsCompleteOnPlannedDayRequested([workout.id])
+        : WorkoutCompleteRequested(workout.id));
+  }
+
+  /// Clear a backlog of overdue workouts that were actually done back then.
+  Future<void> _confirmMarkOverdueDone(
+      BuildContext context, List<Workout> overdue) async {
+    final n = overdue.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(n == 1
+            ? 'Mark 1 overdue workout as done?'
+            : 'Mark $n overdue workouts as done?'),
+        content: const Text(
+          'Each one is marked done on its planned day, including its sets, '
+          'so your history, calendar and coach count it on the right date.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('confirm_mark_overdue_done'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Mark as done'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    HapticFeedback.mediumImpact();
+    context.read<WorkoutBloc>().add(WorkoutsCompleteOnPlannedDayRequested(
+        [for (final w in overdue) w.id]));
+  }
+
   Widget _buildCard(
     BuildContext context,
     Workout workout,
@@ -926,6 +599,9 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
           context.read<WorkoutBloc>().add(
                 WorkoutUpdateRequested(updatedWorkout),
               );
+        } else if (isWorkoutOverdue(workout, now)) {
+          // Done in the past? Let the user backdate it to its planned day.
+          _askWhenDone(context, workout);
         } else {
           // Complete workout using BLoC
           context.read<WorkoutBloc>().add(
@@ -958,129 +634,6 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
       itemBuilder: (context, index) {
         return const WorkoutCardSkeleton();
       },
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Start a workout sheet
-// ---------------------------------------------------------------------------
-
-enum StartWorkoutOption { empty, muscleGroup, coachNext, aiBuild, routine }
-
-/// What the user picked in [StartWorkoutSheet].
-class StartWorkoutSelection {
-  const StartWorkoutSelection(this.option, {this.routine});
-
-  final StartWorkoutOption option;
-
-  /// Set when [option] is [StartWorkoutOption.routine].
-  final Routine? routine;
-}
-
-/// The single "Start workout" entry point: empty workout, muscle-group
-/// split, coach's next workout, AI build (only when [showAi]) and saved
-/// routines. Pops a [StartWorkoutSelection].
-class StartWorkoutSheet extends StatelessWidget {
-  const StartWorkoutSheet({
-    super.key,
-    required this.showAi,
-    required this.routines,
-    this.isGeneratingNext = false,
-    this.isGeneratingAi = false,
-  });
-
-  final bool showAi;
-  final List<Routine> routines;
-  final bool isGeneratingNext;
-  final bool isGeneratingAi;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    void pick(StartWorkoutOption option, {Routine? routine}) =>
-        Navigator.of(context)
-            .pop(StartWorkoutSelection(option, routine: routine));
-
-    Widget busyOr(IconData icon, bool busy) => busy
-        ? const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-        : Icon(icon);
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: Gap.lg),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Gap.xl, 0, Gap.xl, Gap.sm),
-            child: Text('Start a workout', style: theme.textTheme.titleLarge),
-          ),
-          ListTile(
-            key: const Key('start_sheet_empty'),
-            leading: const Icon(Icons.edit_note),
-            title: const Text('Empty workout'),
-            subtitle: const Text('Log as you go'),
-            onTap: () => pick(StartWorkoutOption.empty),
-          ),
-          ListTile(
-            key: const Key('workouts_choose_split'),
-            leading: const Icon(Icons.accessibility_new),
-            title: const Text('Choose by muscle group'),
-            subtitle: const Text('Back & biceps, legs, …'),
-            onTap: () => pick(StartWorkoutOption.muscleGroup),
-          ),
-          ListTile(
-            key: const Key('start_sheet_next'),
-            enabled: !isGeneratingNext,
-            leading: busyOr(Icons.auto_awesome, isGeneratingNext),
-            title: const Text("Coach's next workout"),
-            subtitle: Text(isGeneratingNext
-                ? 'Creating your next workout…'
-                : 'Based on your recent training'),
-            onTap: () => pick(StartWorkoutOption.coachNext),
-          ),
-          if (showAi)
-            ListTile(
-              key: const Key('start_sheet_ai'),
-              enabled: !isGeneratingAi,
-              leading: busyOr(Icons.auto_awesome_outlined, isGeneratingAi),
-              title: const Text('AI build'),
-              subtitle: Text(isGeneratingAi
-                  ? 'Building your AI workout…'
-                  : 'Pick a focus, AI builds the session'),
-              onTap: () => pick(StartWorkoutOption.aiBuild),
-            ),
-          const Divider(indent: Gap.lg, endIndent: Gap.lg),
-          const SectionHeader('From a routine'),
-          if (routines.isEmpty)
-            ListTile(
-              key: const Key('start_sheet_no_routines'),
-              leading: Icon(Icons.bookmark_border,
-                  color: colorScheme.onSurfaceVariant),
-              title: const Text('No routines yet'),
-              subtitle:
-                  const Text('Save a workout as a routine from its ⋮ menu'),
-            )
-          else
-            for (final routine in routines)
-              ListTile(
-                leading: const Icon(Icons.bookmark_outline),
-                title: Text(routine.name,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: Text(describeRoutine(routine),
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                onTap: () =>
-                    pick(StartWorkoutOption.routine, routine: routine),
-              ),
-        ],
-      ),
     );
   }
 }
@@ -1195,7 +748,8 @@ class WorkoutListCard extends StatelessWidget {
             : (Icons.event_outlined, colorScheme.onSurfaceVariant);
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: Gap.lg, vertical: Gap.xs),
+      // 6px between cards (3 + 3) keeps 6+ cards on a 812px-tall phone.
+      margin: const EdgeInsets.symmetric(horizontal: Gap.lg, vertical: 3),
       clipBehavior: Clip.antiAlias,
       // Flat list card: subtle outline instead of a heavy shadow/border.
       elevation: 0,
@@ -1208,9 +762,9 @@ class WorkoutListCard extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           // The 48dp buttons carry their own 12dp inset around the icon, so
-          // the horizontal padding is small; the vertical padding is 12.
-          padding: const EdgeInsets.symmetric(
-              horizontal: Gap.xs, vertical: Gap.md),
+          // the horizontal padding is small; 10 vertical keeps 6+ cards on a
+          // phone screen even when a section header has an action.
+          padding: const EdgeInsets.symmetric(horizontal: Gap.xs, vertical: 10),
           child: Row(
             children: [
               IconButton(

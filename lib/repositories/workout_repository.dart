@@ -109,12 +109,37 @@ class WorkoutRepository {
   }
 
   /// Complete a workout
-  Future<void> completeWorkout(String id, {int? durationMinutes}) async {
+  Future<void> completeWorkout(
+    String id, {
+    int? durationMinutes,
+    DateTime? completedAt,
+    bool markSetsDone = false,
+  }) async {
     final workout = await getWorkout(id);
     if (workout == null) return;
 
-    final completedWorkout = workout.complete(durationMinutes: durationMinutes);
+    final completedWorkout = workout.complete(
+      durationMinutes: durationMinutes,
+      at: completedAt,
+      markSetsDone: markSetsDone,
+    );
     await updateWorkout(completedWorkout);
+  }
+
+  /// Mark several planned workouts as done on their own scheduled days
+  /// (sets included). Returns how many were updated.
+  Future<int> completeWorkoutsOnPlannedDay(List<String> ids) async {
+    var count = 0;
+    for (final id in ids) {
+      final workout = await getWorkout(id);
+      if (workout == null || workout.isCompleted) continue;
+      await updateWorkout(workout.complete(
+        at: workout.plannedCompletionTime,
+        markSetsDone: true,
+      ));
+      count++;
+    }
+    return count;
   }
 
   /// Add a set to a workout

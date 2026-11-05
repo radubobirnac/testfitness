@@ -11,24 +11,50 @@ import 'package:testfitness/blocs/workout/workout_bloc.dart';
 import 'package:testfitness/blocs/workout/workout_event.dart';
 import 'package:testfitness/blocs/workout/workout_state.dart';
 import 'package:testfitness/models/exercise.dart';
+import 'package:testfitness/models/fitness_metric.dart';
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/repositories/metrics_repository.dart';
-import 'package:testfitness/widgets/advanced_charts.dart';
-import 'package:testfitness/widgets/weight_tracking_chart.dart';
-import 'package:testfitness/widgets/volume_progression_chart.dart';
-import 'package:testfitness/services/weight_tracking_service.dart';
+import 'package:testfitness/screens/exercise_history_screen.dart';
 import 'package:testfitness/services/export_import_service.dart';
 import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
+import 'package:testfitness/ui/app_ui.dart';
+import 'package:testfitness/ui/progress_period.dart';
+import 'package:testfitness/ui/progress_widgets.dart';
 import 'package:testfitness/utils/accessibility_helper.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
+import 'package:testfitness/widgets/body_weight_chart.dart';
+import 'package:testfitness/widgets/muscle_balance_chart.dart';
+import 'package:testfitness/widgets/volume_progression_chart.dart';
 import 'package:testfitness/widgets/weekly_check_in_card.dart';
+import 'package:testfitness/widgets/workout_frequency_chart.dart';
 
-/// Progress tracking screen showing workout statistics and charts
+/// Overflow-menu entries in the Progress app bar.
+enum ProgressMenuAction { export, import, refresh }
+
+/// Progress tab: one scroll with "This week", a period selector, then
+/// Strength, Body and Top exercises sections. Export/Import live in the
+/// app-bar overflow menu.
 class ProgressScreen extends StatefulWidget {
-  const ProgressScreen({super.key});
+  const ProgressScreen({
+    super.key,
+    this.clock,
+    this.loadExercises,
+    this.loadBodyWeight,
+  });
+
+  /// Defaults to [DateTime.now]; tests pin it.
+  final DateTime Function()? clock;
+
+  /// Exercise library used for names and muscle groups. Defaults to the
+  /// ExerciseBloc state, falling back to [ExerciseRepository].
+  final Future<List<Exercise>> Function()? loadExercises;
+
+  /// Body-weight entries ([MetricType.weight]). Defaults to
+  /// [MetricsRepository.getMetricsByType].
+  final Future<List<FitnessMetric>> Function()? loadBodyWeight;
 
   @override
   State<ProgressScreen> createState() => _ProgressScreenState();
@@ -36,15 +62,25 @@ class ProgressScreen extends StatefulWidget {
 
 class _ProgressScreenState extends State<ProgressScreen> {
   Map<String, Exercise> _exercisesById = const {};
+  List<FitnessMetric> _bodyWeight = const [];
+  ProgressPeriod _period = ProgressPeriod.threeMonths;
+
+  DateTime get _now => (widget.clock ?? DateTime.now)();
 
   @override
   void initState() {
     super.initState();
     _loadExercisesForCoach();
+    _loadBodyWeight();
     // Load workouts when screen initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
     });
+  }
+
+  void _refresh() {
+    context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
+    _loadBodyWeight();
   }
 
   @override
@@ -54,119 +90,142 @@ class _ProgressScreenState extends State<ProgressScreen> {
         title: const Text('Progress'),
         actions: [
           AccessibilityHelper.accessibleIconButton(
-            icon: Icons.smart_toy,
+            icon: Icons.smart_toy_outlined,
             onPressed: () => _getAIInsights(context),
             semanticLabel: 'Get AI insights on your progress',
             tooltip: 'AI Insights',
           ),
-          AccessibilityHelper.accessibleIconButton(
-            icon: Icons.share,
-            onPressed: () => _showExportOptions(context),
-            semanticLabel: 'Export progress data',
-            tooltip: 'Export Data',
-          ),
-          AccessibilityHelper.accessibleIconButton(
-            icon: Icons.refresh,
-            onPressed: () {
-              context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
+          PopupMenuButton<ProgressMenuAction>(
+            key: const Key('progress_menu'),
+            tooltip: 'More',
+            onSelected: (action) {
+              switch (action) {
+                case ProgressMenuAction.export:
+                  _showExportOptions(context);
+                case ProgressMenuAction.import:
+                  _showImportOptions(context);
+                case ProgressMenuAction.refresh:
+                  _refresh();
+              }
             },
-            semanticLabel: 'Refresh progress data',
-            tooltip: 'Refresh',
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: ProgressMenuAction.export,
+                child: ListTile(
+                  leading: Icon(Icons.file_download_outlined),
+                  title: Text('Export data'),
+                  subtitle: Text('Report, CSV or JSON'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: ProgressMenuAction.import,
+                child: ListTile(
+                  leading: Icon(Icons.file_upload_outlined),
+                  title: Text('Import data'),
+                  subtitle: Text('JSON or CSV'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: ProgressMenuAction.refresh,
+                child: ListTile(
+                  leading: Icon(Icons.refresh),
+                  title: Text('Refresh'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
       ),
       body: BlocBuilder<WorkoutBloc, WorkoutState>(
         builder: (context, state) {
-          if (state.isLoading) {
+          // Spinner only on the first load; reloads keep content on screen.
+          if (state.isLoading && state.workouts.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
 
           if (state.errorMessage != null) {
+            final theme = Theme.of(context);
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error, size: 64, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Error: ${state.errorMessage}',
-                    style: Theme.of(context).textTheme.titleLarge,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () {
-                      context
-                          .read<WorkoutBloc>()
-                          .add(const WorkoutLoadRequested());
-                    },
-                    child: const Text('Retry'),
-                  ),
-                ],
+              child: Padding(
+                padding: AppInsets.page,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline,
+                        size: 64, color: theme.colorScheme.error),
+                    const SizedBox(height: Gap.lg),
+                    Text(
+                      'Error: ${state.errorMessage}',
+                      style: theme.textTheme.titleMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: Gap.lg),
+                    FilledButton(
+                      onPressed: () {
+                        context
+                            .read<WorkoutBloc>()
+                            .add(const WorkoutLoadRequested());
+                      },
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
               ),
             );
           }
 
-          final workouts = state.workouts;
-          final completedWorkouts =
-              workouts.where((w) => w.isCompleted).toList();
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Coach weekly check-in
-                _buildWeeklyCheckIn(workouts),
-                const SizedBox(height: 24),
-
-                // Overview Stats Cards
-                _buildOverviewStats(workouts, completedWorkouts),
-                const SizedBox(height: 24),
-
-                // Weekly Progress Chart
-                _buildWeeklyProgressChart(completedWorkouts),
-                const SizedBox(height: 24),
-
-                // Weight Tracking Chart
-                WeightTrackingChart(
-                  workouts: completedWorkouts,
-                  title: 'Total Weight Lifted Over Time',
-                ),
-                const SizedBox(height: 24),
-
-                // Volume Progression Chart
-                VolumeProgressionChart(
-                  workouts: completedWorkouts,
-                  title: 'Volume Progression Analysis',
-                ),
-                const SizedBox(height: 24),
-
-                // Exercise Distribution Chart
-                AdvancedCharts.buildExerciseDistributionChart(
-                    completedWorkouts, context),
-                const SizedBox(height: 24),
-
-                // Monthly Summary
-                _buildMonthlySummary(completedWorkouts),
-                const SizedBox(height: 24),
-
-                // Recent Achievements
-                _buildRecentAchievements(completedWorkouts),
-              ],
-            ),
-          );
+          return _buildContent(context, state.workouts);
         },
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, List<Workout> workouts) {
+    final now = _now;
+    final prefs = UserPreferencesService();
+    final unit = prefs.getWeightUnitLabel().toLowerCase();
+    final window = ProgressMath.window(
+      _period,
+      now,
+      earliest: ProgressMath.earliestDate(workouts),
+    );
+
+    return RefreshIndicator(
+      onRefresh: () async => _refresh(),
+      child: CustomScrollView(
+        key: const PageStorageKey('progress_scroll'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: _buildPeriodSelector()),
+          const SliverToBoxAdapter(child: SectionHeader('This week')),
+          SliverToBoxAdapter(child: _buildWeeklyCheckIn(workouts, now)),
+          SliverToBoxAdapter(child: SectionHeader('Strength')),
+          ..._buildStrength(context, workouts, window, unit),
+          const SliverToBoxAdapter(child: SectionHeader('Body')),
+          SliverToBoxAdapter(child: _buildBody(window, prefs)),
+          const SliverToBoxAdapter(child: SectionHeader('Top exercises')),
+          SliverToBoxAdapter(
+              child: _buildTopExercises(context, workouts, window, unit, now)),
+          const SliverToBoxAdapter(child: SizedBox(height: Gap.xl)),
+        ],
       ),
     );
   }
 
   Future<void> _loadExercisesForCoach() async {
     try {
-      final exerciseState = context.read<ExerciseBloc>().state;
-      final exercises = exerciseState.exercises.isNotEmpty
-          ? exerciseState.exercises
-          : await ExerciseRepository().getExercises();
+      final List<Exercise> exercises;
+      if (widget.loadExercises != null) {
+        exercises = await widget.loadExercises!();
+      } else {
+        final exerciseState = context.read<ExerciseBloc>().state;
+        exercises = exerciseState.exercises.isNotEmpty
+            ? exerciseState.exercises
+            : await ExerciseRepository().getExercises();
+      }
       if (!mounted) return;
       setState(() {
         _exercisesById = {for (final e in exercises) e.id: e};
@@ -176,12 +235,26 @@ class _ProgressScreenState extends State<ProgressScreen> {
     }
   }
 
-  Widget _buildWeeklyCheckIn(List<Workout> workouts) {
+  Future<void> _loadBodyWeight() async {
+    try {
+      final entries = widget.loadBodyWeight != null
+          ? await widget.loadBodyWeight!()
+          : await MetricsRepository().getMetricsByType(MetricType.weight);
+      if (!mounted) return;
+      setState(() {
+        _bodyWeight = [...entries]..sort((a, b) => a.date.compareTo(b.date));
+      });
+    } catch (_) {
+      // Body section shows its empty state.
+    }
+  }
+
+  Widget _buildWeeklyCheckIn(List<Workout> workouts, DateTime now) {
     final prefs = UserPreferencesService();
     WeeklyCheckIn? checkIn;
     try {
       checkIn = ProgressionCoach(useMetric: prefs.getUseMetricUnits())
-          .weeklyCheckIn(workouts, _exercisesById);
+          .weeklyCheckIn(workouts, _exercisesById, now: now);
     } catch (_) {
       checkIn = null;
     }
@@ -192,388 +265,309 @@ class _ProgressScreenState extends State<ProgressScreen> {
     );
   }
 
-  Widget _buildOverviewStats(
-      List<Workout> allWorkouts, List<Workout> completedWorkouts) {
-    final totalWorkouts = allWorkouts.length;
-    final completedCount = completedWorkouts.length;
-    final completionRate =
-        totalWorkouts > 0 ? (completedCount / totalWorkouts * 100) : 0.0;
-
-    // Calculate total sets and exercises
-    final totalSets =
-        completedWorkouts.fold<int>(0, (sum, w) => sum + w.sets.length);
-    final uniqueExercises =
-        completedWorkouts.expand((w) => w.exerciseIds).toSet().length;
-
-    // Calculate total weight lifted
-    final weightStats =
-        WeightTrackingService.getWeightTrackingStats(completedWorkouts);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Overview',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
+  Widget _buildPeriodSelector() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Gap.lg, Gap.sm, Gap.lg, Gap.xs),
+      child: SizedBox(
+        width: double.infinity,
+        child: SegmentedButton<ProgressPeriod>(
+          key: const Key('progress_period'),
+          showSelectedIcon: false,
+          segments: [
+            for (final p in ProgressPeriod.values)
+              ButtonSegment(
+                value: p,
+                label: Text(p.label),
+                tooltip: 'Show ${p.description}',
               ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _buildStatCard(
-                'Workouts Completed',
-                completedCount.toString(),
-                Icons.check_circle,
-                Colors.green,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildStatCard(
-                'Completion Rate',
-                '${completionRate.toStringAsFixed(1)}%',
-                Icons.trending_up,
-                Colors.blue,
-              ),
-            ),
           ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildStatCard(
-                'Total Weight Lifted',
-                weightStats.formatWeight(weightStats.totalWeightLifted),
-                Icons.fitness_center,
-                Colors.red,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildStatCard(
-                'Avg per Workout',
-                weightStats.formatWeight(weightStats.averagePerWorkout),
-                Icons.trending_up,
-                Colors.green,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildStatCard(
-                'Total Sets',
-                totalSets.toString(),
-                Icons.repeat,
-                Colors.orange,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildStatCard(
-                'Exercises Tried',
-                uniqueExercises.toString(),
-                Icons.sports_gymnastics,
-                Colors.purple,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStatCard(
-      String title, String value, IconData icon, Color color) {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 24),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-            ),
-          ],
+          selected: {_period},
+          onSelectionChanged: (s) => setState(() => _period = s.first),
         ),
       ),
     );
   }
 
-  Widget _buildWeeklyProgressChart(List<Workout> completedWorkouts) {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Weekly Progress',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+  List<Widget> _buildStrength(
+    BuildContext context,
+    List<Workout> workouts,
+    PeriodWindow window,
+    String unit,
+  ) {
+    final totals = window.isEmpty
+        ? PeriodTotals.zero
+        : ProgressMath.totals(workouts, window.start, window.end);
+
+    if (totals.sets == 0) {
+      return [
+        SliverToBoxAdapter(
+          child: ProgressCard(
+            child: ProgressEmptyHint(
+              key: const Key('progress_strength_empty'),
+              icon: Icons.show_chart,
+              message: _period == ProgressPeriod.all
+                  ? 'Finish a workout to start your strength charts.'
+                  : 'No workouts in the ${_period.description} — '
+                      'pick a longer range or log a session.',
             ),
-            const SizedBox(height: 16),
-            _buildSimpleWeeklyChart(completedWorkouts),
-          ],
+          ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildSimpleWeeklyChart(List<Workout> completedWorkouts) {
-    // Get last 7 days
-    final now = DateTime.now();
-    final weekData = <String, int>{};
-
-    for (int i = 6; i >= 0; i--) {
-      final date = now.subtract(Duration(days: i));
-      final dayKey = DateFormat('E').format(date); // Mon, Tue, etc.
-      weekData[dayKey] = 0;
+      ];
     }
 
-    // Count workouts for each day
-    for (final workout in completedWorkouts) {
-      if (workout.completedDate != null) {
-        final daysDiff = now.difference(workout.completedDate!).inDays;
-        if (daysDiff >= 0 && daysDiff < 7) {
-          final dayKey = DateFormat('E').format(workout.completedDate!);
-          weekData[dayKey] = (weekData[dayKey] ?? 0) + 1;
-        }
-      }
+    PeriodTotals? previous;
+    if (window.previousStart != null) {
+      previous =
+          ProgressMath.totals(workouts, window.previousStart!, window.start);
+    }
+    String? changeText(num current, num? before) {
+      final pct = ProgressMath.changePercent(
+          current.toDouble(), before?.toDouble());
+      return pct == null ? null : ProgressMath.formatChange(pct);
     }
 
-    final maxCount = weekData.values.isEmpty
-        ? 1
-        : weekData.values.reduce((a, b) => a > b ? a : b);
-    final chartHeight = 120.0;
+    bool? up(num current, num? before) => ProgressMath.changePercent(
+                current.toDouble(), before?.toDouble()) ==
+            null
+        ? null
+        : current >= before!;
 
-    return SizedBox(
-      height: chartHeight + 40,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: weekData.entries.map((entry) {
-          final barHeight =
-              maxCount > 0 ? (entry.value / maxCount) * chartHeight : 0.0;
-          return Column(
-            mainAxisAlignment: MainAxisAlignment.end,
+    final completed = workouts.where((w) => w.isCompleted).length;
+    final rate = workouts.isEmpty ? 0.0 : completed / workouts.length * 100;
+    final exercisesTried = workouts
+        .where((w) => w.isCompleted)
+        .expand((w) => w.exerciseIds)
+        .toSet()
+        .length;
+    final theme = Theme.of(context);
+
+    return [
+      SliverToBoxAdapter(
+        child: ProgressCard(
+          key: const Key('progress_period_stats'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                entry.value.toString(),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 4),
-              Container(
-                width: 24,
-                height: barHeight.clamp(4.0, chartHeight),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary,
-                  borderRadius: BorderRadius.circular(4),
+              ProgressStatRow(tiles: [
+                ProgressStatTile(
+                  label: 'Workouts',
+                  value: '${totals.workouts}',
+                  change: changeText(totals.workouts, previous?.workouts),
+                  changeUp: up(totals.workouts, previous?.workouts),
                 ),
-              ),
-              const SizedBox(height: 8),
+                ProgressStatTile(
+                  label: 'Sets',
+                  value: '${totals.sets}',
+                  change: changeText(totals.sets, previous?.sets),
+                  changeUp: up(totals.sets, previous?.sets),
+                ),
+                ProgressStatTile(
+                  label: 'Volume',
+                  value: '${ProgressMath.formatVolume(totals.volume)} $unit',
+                  change: changeText(totals.volume, previous?.volume),
+                  changeUp: up(totals.volume, previous?.volume),
+                ),
+              ]),
+              const SizedBox(height: Gap.sm),
               Text(
-                entry.key,
-                style: Theme.of(context).textTheme.bodySmall,
+                previous == null
+                    ? 'All time: $completed workouts · '
+                        '${rate.toStringAsFixed(0)}% of planned completed · '
+                        '$exercisesTried exercises tried'
+                    : 'Change vs the previous ${_period.description.replaceFirst('last ', '')}'
+                        ' · all time: $completed workouts, '
+                        '${rate.toStringAsFixed(0)}% completed, '
+                        '$exercisesTried exercises',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
             ],
+          ),
+        ),
+      ),
+      SliverToBoxAdapter(
+        child: VolumeProgressionChart(
+          key: const Key('progress_volume_chart'),
+          window: window,
+          values: ProgressMath.volumePerBucket(workouts, window),
+          unitLabel: unit,
+        ),
+      ),
+      SliverToBoxAdapter(
+        child: WorkoutFrequencyChart(
+          key: const Key('progress_frequency_chart'),
+          window: window,
+          counts: ProgressMath.workoutsPerBucket(workouts, window),
+        ),
+      ),
+      SliverToBoxAdapter(
+        child: Builder(builder: (context) {
+          final groups = ProgressMath.setsPerMuscleGroup(
+              workouts, _exercisesById, window);
+          if (groups.isEmpty) return const SizedBox.shrink();
+          return MuscleBalanceChart(
+            key: const Key('progress_muscle_balance'),
+            entries: groups,
+            caption: 'Completed working sets, ${_period.description}',
           );
-        }).toList(),
+        }),
       ),
+    ];
+  }
+
+  Widget _buildBody(PeriodWindow window, UserPreferencesService prefs) {
+    if (_bodyWeight.isEmpty) {
+      return const ProgressCard(
+        child: ProgressEmptyHint(
+          key: Key('progress_body_empty'),
+          icon: Icons.monitor_weight_outlined,
+          message: 'No body-weight entries yet. Entries restored from a JSON '
+              'backup appear here.',
+        ),
+      );
+    }
+    final inRange = window.isEmpty
+        ? _bodyWeight
+        : _bodyWeight.where((m) => !m.date.isBefore(window.start)).toList();
+    if (inRange.isEmpty) {
+      return ProgressCard(
+        child: ProgressEmptyHint(
+          key: const Key('progress_body_empty'),
+          icon: Icons.monitor_weight_outlined,
+          message: 'No body-weight entries in the ${_period.description}.',
+        ),
+      );
+    }
+    return BodyWeightChart(
+      key: const Key('progress_body_chart'),
+      entries: inRange,
+      unitLabel: prefs.getUseMetricUnits() ? 'kg' : 'lbs',
+      caption: '${inRange.length} entries, ${_period.description}',
     );
   }
 
-  Widget _buildMonthlySummary(List<Workout> completedWorkouts) {
-    final now = DateTime.now();
-    final thisMonth = completedWorkouts.where((w) {
-      if (w.completedDate == null) return false;
-      final date = w.completedDate!;
-      return date.year == now.year && date.month == now.month;
-    }).toList();
+  Widget _buildTopExercises(
+    BuildContext context,
+    List<Workout> workouts,
+    PeriodWindow window,
+    String unit,
+    DateTime now,
+  ) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final top = window.isEmpty
+        ? const <ExerciseVolume>[]
+        : ProgressMath.topExercises(workouts, window, limit: 5)
+            .where((e) => _exercisesById.containsKey(e.exerciseId))
+            .toList();
+    if (top.isEmpty) {
+      return const ProgressCard(
+        child: ProgressEmptyHint(
+          key: Key('progress_exercises_empty'),
+          icon: Icons.fitness_center,
+          message: 'Your most-trained exercises in this range show up here.',
+        ),
+      );
+    }
 
-    final lastMonth = completedWorkouts.where((w) {
-      if (w.completedDate == null) return false;
-      final date = w.completedDate!;
-      final lastMonthDate = DateTime(now.year, now.month - 1);
-      return date.year == lastMonthDate.year &&
-          date.month == lastMonthDate.month;
-    }).toList();
-
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Monthly Summary',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+    final coach = ProgressionCoach(
+        useMetric: UserPreferencesService().getUseMetricUnits());
+    return ProgressCard(
+      key: const Key('progress_top_exercises'),
+      padding: const EdgeInsets.symmetric(vertical: Gap.sm),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Gap.lg, 0, Gap.lg, Gap.xs),
+            child: Text(
+              'By volume, ${_period.description} · tap for history',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildMonthlyStatItem(
-                    'This Month',
-                    thisMonth.length,
-                    thisMonth.fold<int>(0, (sum, w) => sum + w.sets.length),
-                  ),
+          ),
+          for (final e in top)
+            Builder(builder: (context) {
+              final exercise = _exercisesById[e.exerciseId]!;
+              final change = coach
+                  .trend(e.exerciseId, workouts, weeks: 8, now: now)
+                  .changePercent;
+              return ListTile(
+                key: Key('progress_exercise_${e.exerciseId}'),
+                minTileHeight: kMinTouchTarget,
+                title: Text(
+                  exercise.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyLarge,
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildMonthlyStatItem(
-                    'Last Month',
-                    lastMonth.length,
-                    lastMonth.fold<int>(0, (sum, w) => sum + w.sets.length),
-                  ),
+                subtitle: Text(
+                  '${ProgressMath.formatVolume(e.volume)} $unit · '
+                  '${e.sessions} session${e.sessions == 1 ? '' : 's'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMonthlyStatItem(String title, int workouts, int sets) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '$workouts workouts',
-          style: Theme.of(context).textTheme.bodyLarge,
-        ),
-        Text(
-          '$sets sets',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRecentAchievements(List<Workout> completedWorkouts) {
-    // Sort by completion date (most recent first)
-    final recentWorkouts = completedWorkouts
-        .where((w) => w.completedDate != null)
-        .toList()
-      ..sort((a, b) => b.completedDate!.compareTo(a.completedDate!));
-
-    final achievements = <String>[];
-
-    // Add some simple achievements
-    if (completedWorkouts.length >= 10) {
-      achievements.add('🏆 Completed 10+ workouts');
-    }
-    if (completedWorkouts.length >= 5) {
-      achievements.add('💪 Completed 5+ workouts');
-    }
-    if (recentWorkouts.isNotEmpty) {
-      final lastWorkout = recentWorkouts.first;
-      final daysSince =
-          DateTime.now().difference(lastWorkout.completedDate!).inDays;
-      if (daysSince == 0) {
-        achievements.add('🔥 Worked out today');
-      } else if (daysSince == 1) {
-        achievements.add('⚡ Worked out yesterday');
-      }
-    }
-
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Recent Achievements',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            if (achievements.isEmpty)
-              Text(
-                'Complete your first workout to unlock achievements!',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              )
-            else
-              ...achievements.map((achievement) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Row(
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          achievement,
-                          style: Theme.of(context).textTheme.bodyLarge,
+                          change == null
+                              ? '—'
+                              : ProgressMath.formatChange(change),
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            color: change == null
+                                ? scheme.onSurfaceVariant
+                                : change >= 0
+                                    ? scheme.primary
+                                    : scheme.error,
+                          ),
+                        ),
+                        Text(
+                          '8-wk e1RM',
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
                         ),
                       ],
                     ),
-                  )),
-          ],
-        ),
+                    const SizedBox(width: Gap.xs),
+                    Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+                  ],
+                ),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => ExerciseHistoryScreen(
+                    exercise: exercise,
+                    workouts: workouts,
+                  ),
+                )),
+              );
+            }),
+        ],
       ),
     );
   }
 
-  /// Show export options dialog
+  /// Export sheet (opened from the overflow menu).
   void _showExportOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
+      showDragHandle: true,
+      builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Export & Import Data',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Gap.lg, 0, Gap.lg, Gap.sm),
+              child: Text(
+                'Export data',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
             ),
-            const SizedBox(height: 16),
             AccessibilityHelper.accessibleListTile(
               leading: const Icon(Icons.description),
               title: const Text('Progress Report'),
@@ -595,7 +589,30 @@ class _ProgressScreenState extends State<ProgressScreen> {
               semanticLabel: 'Export JSON backup',
               onTap: () => _exportJsonBackup(context),
             ),
-            const Divider(),
+            const SizedBox(height: Gap.sm),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Import sheet (opened from the overflow menu).
+  void _showImportOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Gap.lg, 0, Gap.lg, Gap.sm),
+              child: Text(
+                'Import data',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
             AccessibilityHelper.accessibleListTile(
               leading: const Icon(Icons.file_upload),
               title: const Text('Import File (JSON/CSV)'),
@@ -610,6 +627,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
               semanticLabel: 'Import JSON backup via paste',
               onTap: () => _showImportDialog(context),
             ),
+            const SizedBox(height: Gap.sm),
           ],
         ),
       ),
@@ -638,7 +656,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         AnimatedFeedback.showSnackBar(
           context,
           'Export failed: $error',
-          backgroundColor: Colors.red,
+          backgroundColor: Theme.of(context).colorScheme.error,
         );
       }
     }
@@ -673,7 +691,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         AnimatedFeedback.showSnackBar(
           context,
           'Export failed: $error',
-          backgroundColor: Colors.red,
+          backgroundColor: Theme.of(context).colorScheme.error,
         );
       }
     }
@@ -712,7 +730,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         AnimatedFeedback.showSnackBar(
           context,
           'Export failed: $error',
-          backgroundColor: Colors.red,
+          backgroundColor: Theme.of(context).colorScheme.error,
         );
       }
     }
@@ -1017,7 +1035,8 @@ class _ProgressScreenState extends State<ProgressScreen> {
                   const SizedBox(height: 8),
                   Text(
                     errorMessage!,
-                    style: const TextStyle(color: Colors.red),
+                    style: TextStyle(
+                        color: Theme.of(dialogContext).colorScheme.error),
                   ),
                 ],
               ],
@@ -1181,6 +1200,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
     if (mounted) {
       context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
       context.read<ExerciseBloc>().add(const ExerciseLoadRequested());
+      _loadBodyWeight();
       await _showImportSummary(result, mode, backupPath);
       AccessibilityHelper.announceMessage('Import completed');
     }
@@ -1283,9 +1303,9 @@ class _ProgressScreenState extends State<ProgressScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Import Preview',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
             Text('Workouts: ${preview.totalWorkouts}'),
@@ -1316,7 +1336,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         AnimatedFeedback.showSnackBar(
           context,
           'AI insights require an internet connection',
-          backgroundColor: Colors.orange,
+          backgroundColor: Theme.of(context).colorScheme.tertiary,
         );
         return;
       }
@@ -1350,11 +1370,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.smart_toy, color: Colors.blue),
-                SizedBox(width: 8),
-                Text('AI Progress Insights'),
+                Icon(Icons.smart_toy,
+                    color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                const Flexible(child: Text('AI Progress Insights')),
               ],
             ),
             content: SingleChildScrollView(
@@ -1364,10 +1385,9 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 children: [
                   Text(
                     'Powered by Gemini 2.5 Flash Lite',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                   ),
                   const SizedBox(height: 12),
                   Text(insights),
@@ -1392,7 +1412,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         AnimatedFeedback.showSnackBar(
           context,
           'Failed to get AI insights: $error',
-          backgroundColor: Colors.red,
+          backgroundColor: Theme.of(context).colorScheme.error,
         );
       }
     }

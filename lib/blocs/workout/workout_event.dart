@@ -79,10 +79,33 @@ class WorkoutCompleteRequested extends WorkoutEvent {
   final String workoutId;
   final int? durationMinutes;
 
-  const WorkoutCompleteRequested(this.workoutId, {this.durationMinutes});
+  /// Backdated completion time (null = now).
+  final DateTime? completedAt;
+
+  /// Also tick off sets that weren't marked done.
+  final bool markSetsDone;
+
+  const WorkoutCompleteRequested(
+    this.workoutId, {
+    this.durationMinutes,
+    this.completedAt,
+    this.markSetsDone = false,
+  });
 
   @override
-  List<Object?> get props => [workoutId, durationMinutes];
+  List<Object?> get props =>
+      [workoutId, durationMinutes, completedAt, markSetsDone];
+}
+
+/// Mark planned workouts as done on their own scheduled days (e.g. clearing
+/// a backlog of "overdue" workouts that were actually done back then).
+class WorkoutsCompleteOnPlannedDayRequested extends WorkoutEvent {
+  final List<String> workoutIds;
+
+  const WorkoutsCompleteOnPlannedDayRequested(this.workoutIds);
+
+  @override
+  List<Object?> get props => [workoutIds];
 }
 
 /// Event to duplicate a workout

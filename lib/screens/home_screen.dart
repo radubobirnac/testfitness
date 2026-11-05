@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import 'package:testfitness/blocs/app/app_bloc.dart';
 import 'package:testfitness/blocs/app/app_event.dart';
@@ -8,23 +8,57 @@ import 'package:testfitness/blocs/workout/workout_bloc.dart';
 import 'package:testfitness/blocs/workout/workout_event.dart';
 import 'package:testfitness/blocs/workout/workout_state.dart';
 import 'package:testfitness/models/workout.dart';
+import 'package:testfitness/repositories/exercise_repository.dart';
+import 'package:testfitness/repositories/routine_repository.dart';
 import 'package:testfitness/screens/boxing_cardio_screen.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
 import 'package:testfitness/screens/heart_rate_monitor_screen.dart';
 import 'package:testfitness/screens/routines_screen.dart';
+import 'package:testfitness/screens/vo2_max_training_screen.dart';
 import 'package:testfitness/screens/weight_test_selection_screen.dart';
+import 'package:testfitness/screens/workouts_screen.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/services/ai_workout_generator.dart';
-import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
+import 'package:testfitness/ui/app_ui.dart';
 import 'package:testfitness/utils/app_logger.dart';
-import 'package:testfitness/widgets/animated_loading_card.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
+import 'package:testfitness/widgets/start_workout_flow.dart';
+import 'package:testfitness/widgets/workout_card_skeleton.dart';
 import 'package:testfitness/widgets/workout_split_picker.dart';
 
+/// Bottom-navigation indices (see MainScreen).
+const int _kWorkoutsTab = 1;
+const int _kProgressTab = 3;
+
+/// Max rows in the Upcoming and Recent sections.
+const int _kHomeListLimit = 3;
+
+/// "Today" dashboard: start a workout, today's suggestion, upcoming and
+/// recent workouts, routines, this week's numbers and tools — one scroll.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({
+    super.key,
+    this.isAiAvailable,
+    this.routineRepository,
+    this.clock,
+    this.suggestionLoader,
+  });
+
+  /// Overrides the AI availability check (tests). Defaults to
+  /// `AIService().isAvailable`.
+  final bool Function()? isAiAvailable;
+
+  /// Routine storage (tests). Defaults to [RoutineRepository].
+  final RoutineRepository? routineRepository;
+
+  /// "Now" (tests). Defaults to [DateTime.now].
+  final DateTime Function()? clock;
+
+  /// Builds the suggestion text (tests). Defaults to the AI suggestion, or
+  /// the offline coach's plan when AI is unavailable.
+  final Future<String> Function(List<Workout> workouts)? suggestionLoader;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -35,9 +69,29 @@ enum _WorkoutFocusPreference {
   multipleMuscleGroups,
 }
 
+/// This week vs last week, for the summary row.
+class _WeekSummary {
+  const _WeekSummary(this.thisWeek, this.lastWeek);
+
+  final WeeklyCheckIn thisWeek;
+  final WeeklyCheckIn lastWeek;
+}
+
 class _HomeScreenState extends State<HomeScreen> {
+  static const String _importedFromCsvLabel = 'Imported from CSV';
+
   Future<String>? _aiSuggestionFuture;
   String? _aiSuggestionSignature;
+
+  late final RoutineRepository _routineRepository =
+      widget.routineRepository ?? RoutineRepository();
+
+  // Memoised weekly summary (recomputed when the workout list or day changes).
+  List<Workout>? _summaryWorkouts;
+  DateTime? _summaryDay;
+  _WeekSummary? _summary;
+
+  DateTime get _now => (widget.clock ?? DateTime.now)();
 
   @override
   void initState() {
@@ -50,6 +104,17 @@ class _HomeScreenState extends State<HomeScreen> {
     AppLogger.info('HomeScreen: Refreshing workouts');
     context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
   }
+
+  void _switchToTab(int index) {
+    HapticFeedback.selectionClick();
+    context.read<AppBloc>().add(AppTabChanged(index));
+  }
+
+  void _openStartFlow() => showStartWorkoutFlow(
+        context,
+        isAiAvailable: widget.isAiAvailable,
+        routineRepository: _routineRepository,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -67,57 +132,255 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context, state) {
         return Scaffold(
           appBar: AppBar(
-            title: const Text('StrengthWave'),
+            title: const Text('Today'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
                 onPressed: _refreshWorkouts,
               ),
             ],
           ),
-          body: state.isLoading
+          // Skeleton only on the first load; later reloads keep the page.
+          body: state.isLoading && state.workouts.isEmpty
               ? _buildLoadingState()
-              : RefreshIndicator(
-                  onRefresh: () async => _refreshWorkouts(),
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildUpcomingWorkoutsSection(state.workouts),
-                        const SizedBox(height: 12),
-                        _buildChooseWorkoutCard(state.workouts),
-                        const SizedBox(height: 24),
-                        _buildRecentWorkoutsSection(state.workouts),
-                        const SizedBox(height: 24),
-                        RoutineQuickStart(workouts: state.workouts),
-                        _buildQuickActionsSection(),
-                      ],
-                    ),
-                  ),
-                ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _createNewWorkout(context),
-            child: const Icon(Icons.add),
-          ),
+              : _buildDashboard(context, state.workouts),
         );
       },
     );
   }
 
-  void _createNewWorkout(BuildContext context) {
-    AppLogger.info('HomeScreen: Opening editor for a new workout');
+  Widget _buildDashboard(BuildContext context, List<Workout> workouts) {
+    final now = _now;
+    _ensureAISuggestionFuture(workouts);
+    final unitLabel =
+        UserPreferencesService().getWeightUnitLabel().toLowerCase();
+    final upcoming = _upcomingWorkouts(workouts, now);
+    final recent = _recentWorkouts(workouts);
 
-    // Open the editor for a new (unsaved) workout dated today. Nothing is
-    // persisted until the first completed set is autosaved, so backing out
-    // does not leave an empty workout behind.
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ExerciseDetailScreen(),
+    return RefreshIndicator(
+      onRefresh: () async => _refreshWorkouts(),
+      child: CustomScrollView(
+        key: const PageStorageKey('home_scroll'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: _buildStartSection(context, now)),
+          const SliverToBoxAdapter(child: SectionHeader("Today's suggestion")),
+          SliverToBoxAdapter(child: _buildSuggestionCard(context, workouts)),
+          if (upcoming.isNotEmpty) ...[
+            SliverToBoxAdapter(
+              child: SectionHeader(
+                'Upcoming',
+                trailing: _trailingButton(
+                  key: const Key('home_upcoming_see_all'),
+                  label: 'See all',
+                  onPressed: () => _switchToTab(_kWorkoutsTab),
+                ),
+              ),
+            ),
+            SliverList.list(children: [
+              for (final workout in upcoming)
+                _buildWorkoutCard(context, workout, now, unitLabel),
+            ]),
+          ],
+          SliverToBoxAdapter(
+            child: RoutineQuickStart(
+              workouts: workouts,
+              repository: _routineRepository,
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: SectionHeader(
+              'This week',
+              trailing: _trailingButton(
+                key: const Key('home_see_progress'),
+                label: 'See progress',
+                onPressed: () => _switchToTab(_kProgressTab),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: _buildWeekSummary(context, workouts, now, unitLabel),
+          ),
+          const SliverToBoxAdapter(child: SectionHeader('Recent workouts')),
+          if (recent.isEmpty)
+            SliverToBoxAdapter(child: _buildRecentEmpty(context))
+          else
+            SliverList.list(children: [
+              for (final workout in recent)
+                _buildWorkoutCard(context, workout, now, unitLabel),
+            ]),
+          const SliverToBoxAdapter(child: SectionHeader('Tools')),
+          SliverToBoxAdapter(child: _buildTools(context)),
+          const SliverToBoxAdapter(child: SizedBox(height: Gap.xl)),
+        ],
       ),
-    ).then((_) => _refreshWorkouts());
+    );
+  }
+
+  Widget _trailingButton({
+    required Key key,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return TextButton(
+      key: key,
+      style: TextButton.styleFrom(
+        minimumSize: const Size(kMinTouchTarget, kMinTouchTarget),
+      ),
+      onPressed: onPressed,
+      child: Text(label),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Start
+  // -------------------------------------------------------------------------
+
+  Widget _buildStartSection(BuildContext context, DateTime now) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Gap.lg, Gap.sm, Gap.lg, Gap.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            DateFormat('EEEE, MMM d').format(now),
+            key: const Key('home_date'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleMedium
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: Gap.md),
+          FilledButton.icon(
+            key: const Key('home_start_workout'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(kMinTouchTarget + 8),
+            ),
+            onPressed: _openStartFlow,
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('Start workout'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Today's suggestion (coach / AI plan + muscle-split picker)
+  // -------------------------------------------------------------------------
+
+  Widget _buildSuggestionCard(BuildContext context, List<Workout> workouts) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final usingCoach = _usingCoach;
+
+    return _FlatCard(
+      key: const Key('home_suggestion_card'),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(Gap.lg, Gap.xs, Gap.xs, Gap.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(usingCoach ? Icons.insights : Icons.smart_toy,
+                    color: colorScheme.primary),
+                const SizedBox(width: Gap.md),
+                Expanded(
+                  child: Text(
+                    usingCoach ? 'Coach suggestion' : 'AI workout suggestion',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('home_suggestion_refresh'),
+                  tooltip: 'New suggestion',
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () => _refreshAISuggestion(workouts),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(right: Gap.md),
+              child: FutureBuilder<String>(
+                future: _aiSuggestionFuture,
+                builder: (context, snapshot) {
+                  final bodyStyle = theme.textTheme.bodyMedium;
+                  final metaStyle = bodyStyle?.copyWith(
+                      color: colorScheme.onSurfaceVariant);
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return Row(
+                      children: [
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: Gap.sm),
+                        Expanded(
+                          child: Text(
+                            usingCoach
+                                ? 'Coach is planning your next session...'
+                                : 'AI analyzing your patterns...',
+                            style: metaStyle,
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+                  if (snapshot.hasError) {
+                    return Text(
+                      'Unable to get a suggestion right now.',
+                      style: metaStyle,
+                    );
+                  }
+                  return Text(
+                    snapshot.data ?? 'No suggestion available',
+                    key: const Key('home_suggestion_text'),
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: bodyStyle,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: Gap.md),
+            Padding(
+              padding: const EdgeInsets.only(right: Gap.md),
+              child: Wrap(
+                spacing: Gap.sm,
+                runSpacing: Gap.sm,
+                children: [
+                  FilledButton.tonal(
+                    key: const Key('home_suggestion_start'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(kMinTouchTarget, kMinTouchTarget),
+                    ),
+                    onPressed: () => _createAIWorkout(context, workouts),
+                    child: Text(usingCoach ? 'Start this' : 'Create AI workout'),
+                  ),
+                  OutlinedButton(
+                    key: const Key('home_choose_workout'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(kMinTouchTarget, kMinTouchTarget),
+                    ),
+                    onPressed: () {
+                      HapticFeedback.selectionClick();
+                      openWorkoutSplitPicker(context, workouts);
+                    },
+                    child: const Text('Choose another'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Create an AI-generated workout with exercises and appropriate weights
@@ -130,14 +393,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_usingCoach) {
       final coachWorkout = await _buildCoachWorkout(allWorkouts);
       if (!context.mounted) return;
-      context.read<WorkoutBloc>().add(WorkoutCreateRequested(coachWorkout));
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) =>
-              ExerciseDetailScreen.editWorkout(workoutId: coachWorkout.id),
-        ),
-      ).then((_) => _refreshWorkouts());
+      _openCreated(context, coachWorkout);
       return;
     }
 
@@ -152,8 +408,8 @@ class _HomeScreenState extends State<HomeScreen> {
         content: Row(
           children: [
             CircularProgressIndicator(),
-            SizedBox(width: 16),
-            Text('AI is creating your workout...'),
+            SizedBox(width: Gap.lg),
+            Expanded(child: Text('AI is creating your workout...')),
           ],
         ),
       ),
@@ -167,14 +423,26 @@ class _HomeScreenState extends State<HomeScreen> {
             ))
         .toList();
 
-    // Generate AI workout asynchronously
-    final preferSingleMuscleGroup =
-        preference == _WorkoutFocusPreference.singleMuscleGroup;
     _generateAIWorkoutAsync(
       context,
       recentWorkouts,
-      preferSingleMuscleGroup: preferSingleMuscleGroup,
+      preferSingleMuscleGroup:
+          preference == _WorkoutFocusPreference.singleMuscleGroup,
     );
+  }
+
+  /// Creates [workout] and opens it in the editor; reloads on return.
+  void _openCreated(BuildContext context, Workout workout) {
+    context.read<WorkoutBloc>().add(WorkoutCreateRequested(workout));
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            ExerciseDetailScreen.editWorkout(workoutId: workout.id),
+      ),
+    ).then((_) {
+      if (mounted) _refreshWorkouts();
+    });
   }
 
   /// Helper method to handle async AI workout generation
@@ -184,43 +452,24 @@ class _HomeScreenState extends State<HomeScreen> {
     bool? preferSingleMuscleGroup,
   }) async {
     try {
-      // Generate AI workout
-      final aiWorkoutGenerator = AIWorkoutGenerator();
-      final aiWorkout = await aiWorkoutGenerator.generateAIWorkout(
+      final aiWorkout = await AIWorkoutGenerator().generateAIWorkout(
         workoutName: 'AI Suggested Workout',
         recentWorkouts: recentWorkouts,
         lookbackDays: 14,
         preferSingleMuscleGroup: preferSingleMuscleGroup,
       );
-
-      // Check if widget is still mounted before using context
       if (!context.mounted) return;
 
       // Close loading dialog
       Navigator.of(context).pop();
-
-      // Create workout using BLoC
-      context.read<WorkoutBloc>().add(WorkoutCreateRequested(aiWorkout));
-
-      // Navigate to workout editing screen
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) =>
-              ExerciseDetailScreen.editWorkout(workoutId: aiWorkout.id),
-        ),
-      ).then((_) => _refreshWorkouts());
-
-      // Show success message
+      _openCreated(context, aiWorkout);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
               'AI workout created with ${aiWorkout.exerciseIds.length} exercises!'),
-          backgroundColor: Colors.green,
         ),
       );
     } catch (error) {
-      // Check if widget is still mounted before using context
       if (!context.mounted) return;
 
       // Close loading dialog if still open
@@ -233,14 +482,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // Fallback: offline coach builds the workout from the user's history.
       final coachWorkout = await _buildCoachWorkout(recentWorkouts);
       if (!context.mounted) return;
-      context.read<WorkoutBloc>().add(WorkoutCreateRequested(coachWorkout));
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) =>
-              ExerciseDetailScreen.editWorkout(workoutId: coachWorkout.id),
-        ),
-      ).then((_) => _refreshWorkouts());
+      _openCreated(context, coachWorkout);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -279,471 +521,257 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildUpcomingWorkoutsSection(List<Workout> workouts) {
-    final now = DateTime.now();
-    _ensureAISuggestionFuture(workouts);
+  // -------------------------------------------------------------------------
+  // Upcoming / recent workouts
+  // -------------------------------------------------------------------------
 
-    // Filter for upcoming workouts (scheduled and not completed)
-    final upcomingWorkouts = workouts
-        .where(
-          (w) =>
-              !w.isCompleted &&
-              w.scheduledDate != null &&
-              w.scheduledDate!.isAfter(now),
-        )
-        .toList();
+  /// Not completed, scheduled today or later, soonest first.
+  List<Workout> _upcomingWorkouts(List<Workout> workouts, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final upcoming = workouts
+        .where((w) =>
+            !w.isCompleted &&
+            w.scheduledDate != null &&
+            !w.scheduledDate!.isBefore(today))
+        .toList()
+      ..sort((a, b) => a.scheduledDate!.compareTo(b.scheduledDate!));
+    return upcoming.take(_kHomeListLimit).toList();
+  }
 
-    // Sort upcoming workouts by scheduled date
-    upcomingWorkouts.sort(
-      (a, b) => a.scheduledDate!.compareTo(b.scheduledDate!),
-    );
+  /// Last completed workouts, most recent first.
+  List<Workout> _recentWorkouts(List<Workout> workouts) {
+    final completed = workouts.where((w) => w.isCompleted).toList()
+      ..sort((a, b) => workoutDisplayDate(b).compareTo(workoutDisplayDate(a)));
+    return completed.take(_kHomeListLimit).toList();
+  }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Upcoming Workouts',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        upcomingWorkouts.isEmpty
-            ? Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    children: [
-                      Icon(
-                        _usingCoach ? Icons.insights : Icons.smart_toy,
-                        size: 48,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _usingCoach
-                            ? 'Coach Suggestion'
-                            : 'AI Workout Suggestion',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      FutureBuilder<String>(
-                        future: _aiSuggestionFuture,
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(_usingCoach
-                                    ? 'Coach is planning your next session...'
-                                    : 'AI analyzing your patterns...'),
-                              ],
-                            );
-                          }
-
-                          if (snapshot.hasError) {
-                            return Column(
-                              children: [
-                                const Text(
-                                  'Unable to get AI suggestion (offline)',
-                                  style: TextStyle(color: Colors.orange),
-                                ),
-                                const SizedBox(height: 8),
-                                ElevatedButton(
-                                  onPressed: () => _createNewWorkout(context),
-                                  child: const Text('Create New Workout'),
-                                ),
-                              ],
-                            );
-                          }
-
-                          return Column(
-                            children: [
-                              Text(
-                                snapshot.data ?? 'No suggestion available',
-                                style: const TextStyle(fontSize: 14),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  ElevatedButton(
-                                    onPressed: () {
-                                      _createAIWorkout(context, workouts);
-                                    },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Theme.of(context)
-                                          .colorScheme
-                                          .secondary,
-                                    ),
-                                    child: Text(_usingCoach
-                                        ? 'Start This Workout'
-                                        : 'Create AI Workout'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: () {
-                                      _refreshAISuggestion(workouts);
-                                    },
-                                    child: const Text('New Suggestion'),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: upcomingWorkouts.length,
-                itemBuilder: (context, index) {
-                  final workout = upcomingWorkouts[index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      title: Text(workout.name),
-                      subtitle: Text(
-                        workout.scheduledDate != null
-                            ? DateFormat(
-                                'EEEE, MMMM d',
-                              ).format(workout.scheduledDate!)
-                            : 'No date scheduled',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        // Navigate to workout edit screen
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                ExerciseDetailScreen.editWorkout(
-                              workoutId: workout.id,
-                            ),
-                          ),
-                        ).then((_) => _refreshWorkouts());
-                      },
-                    ),
-                  );
-                },
-              ),
-      ],
+  /// Same card and actions as the Workouts tab.
+  Widget _buildWorkoutCard(
+    BuildContext context,
+    Workout workout,
+    DateTime now,
+    String unitLabel,
+  ) {
+    final bloc = context.read<WorkoutBloc>();
+    return WorkoutListCard(
+      key: ValueKey('home_workout_card_${workout.id}'),
+      workout: workout,
+      exerciseCount: workout.exerciseIds.length,
+      displayDate: workoutDisplayDate(workout),
+      isOverdue: isWorkoutOverdue(workout, now),
+      weightUnitLabel: unitLabel,
+      showDescription: workout.description != null &&
+          workout.description!.trim().isNotEmpty &&
+          workout.description != _importedFromCsvLabel,
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                ExerciseDetailScreen.editWorkout(workoutId: workout.id),
+          ),
+        ).then((_) {
+          if (mounted) _refreshWorkouts();
+        });
+      },
+      onToggleComplete: () {
+        if (workout.isCompleted) {
+          bloc.add(WorkoutUpdateRequested(Workout(
+            id: workout.id,
+            name: workout.name,
+            description: workout.description,
+            scheduledDate: workout.scheduledDate,
+            completedDate: null,
+            isCompleted: false,
+            sets: workout.sets,
+            durationMinutes: workout.durationMinutes,
+            notes: workout.notes,
+          )));
+        } else {
+          bloc.add(WorkoutCompleteRequested(workout.id));
+        }
+      },
+      onRepeat: () => bloc.add(WorkoutDuplicateRequested(workout.id)),
+      onSaveAsRoutine: () => saveWorkoutAsRoutine(context, workout,
+          repository: _routineRepository),
+      onDelete: () => bloc.add(WorkoutDeleteRequested(workout.id)),
     );
   }
 
-  /// Prominent entry to the muscle-split picker ("Back & Biceps", "Legs"...).
-  Widget _buildChooseWorkoutCard(List<Workout> workouts) {
-    final cs = Theme.of(context).colorScheme;
-    return Card(
-      key: const Key('home_choose_workout'),
-      margin: EdgeInsets.zero,
-      color: cs.secondaryContainer,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () async {
-          HapticFeedback.selectionClick();
-          await openWorkoutSplitPicker(context, workouts);
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Icon(Icons.accessibility_new,
-                  size: 32, color: cs.onSecondaryContainer),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Choose your workout',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: cs.onSecondaryContainer,
-                          ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Pick muscles — back & biceps, legs, chest…',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(color: cs.onSecondaryContainer),
-                    ),
-                  ],
-                ),
+  Widget _buildRecentEmpty(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      key: const Key('home_recent_empty'),
+      padding: const EdgeInsets.symmetric(horizontal: Gap.lg, vertical: Gap.sm),
+      child: Text(
+        'No completed workouts yet. Finish a workout to see it here.',
+        style: theme.textTheme.bodyMedium
+            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // This week
+  // -------------------------------------------------------------------------
+
+  _WeekSummary _weekSummary(List<Workout> workouts, DateTime now) {
+    final day = DateTime(now.year, now.month, now.day);
+    final cached = _summary;
+    if (cached != null &&
+        identical(_summaryWorkouts, workouts) &&
+        _summaryDay == day) {
+      return cached;
+    }
+    final coach = ProgressionCoach(
+        useMetric: UserPreferencesService().getUseMetricUnits());
+    // Muscle-group breakdowns aren't shown here, so no exercise lookup.
+    final summary = _WeekSummary(
+      coach.weeklyCheckIn(workouts, const {}, now: now),
+      coach.weeklyCheckIn(workouts, const {},
+          now: DateTime(now.year, now.month, now.day - 7, now.hour,
+              now.minute)),
+    );
+    _summaryWorkouts = workouts;
+    _summaryDay = day;
+    _summary = summary;
+    return summary;
+  }
+
+  Widget _buildWeekSummary(BuildContext context, List<Workout> workouts,
+      DateTime now, String unitLabel) {
+    final summary = _weekSummary(workouts, now);
+    final thisWeek = summary.thisWeek;
+    final lastWeek = summary.lastWeek;
+    final compact = NumberFormat.compact();
+    String volume(double v) => '${compact.format(v.round())} $unitLabel';
+
+    return Padding(
+      key: const Key('home_week_summary'),
+      padding: AppInsets.page,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _StatTile(
+                label: 'Workouts',
+                value: '${thisWeek.workoutsThisWeek}',
+                comparison: 'Last wk ${lastWeek.workoutsThisWeek}',
               ),
-              Icon(Icons.chevron_right, color: cs.onSecondaryContainer),
-            ],
-          ),
+            ),
+            const SizedBox(width: Gap.sm),
+            Expanded(
+              child: _StatTile(
+                label: 'Sets',
+                value: '${thisWeek.setsThisWeek}',
+                comparison: 'Last wk ${lastWeek.setsThisWeek}',
+              ),
+            ),
+            const SizedBox(width: Gap.sm),
+            Expanded(
+              child: _StatTile(
+                label: 'Volume',
+                value: volume(thisWeek.volumeThisWeek),
+                comparison:
+                    'Last wk ${volume(thisWeek.volumeLastWeek ?? 0)}',
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildRecentWorkoutsSection(List<Workout> workouts) {
-    // Get completed workouts
-    final completedWorkouts = workouts.where((w) => w.isCompleted).toList();
+  // -------------------------------------------------------------------------
+  // Tools
+  // -------------------------------------------------------------------------
 
-    // Sort by completion date (most recent first)
-    completedWorkouts.sort(
-      (a, b) => (b.completedDate ?? DateTime.now()).compareTo(
-        a.completedDate ?? DateTime.now(),
+  Widget _buildTools(BuildContext context) {
+    void open(Widget screen) {
+      Navigator.push(
+          context, MaterialPageRoute(builder: (context) => screen));
+    }
+
+    final tools = <_ToolTile>[
+      _ToolTile(
+        icon: Icons.scale,
+        label: 'Find Your Weight',
+        onTap: () => open(const WeightTestSelectionScreen()),
       ),
-    );
+      _ToolTile(
+        icon: Icons.sports_mma,
+        label: 'Boxing Cardio',
+        onTap: () => open(const BoxingCardioScreen()),
+      ),
+      _ToolTile(
+        icon: Icons.monitor_heart,
+        label: 'Heart Rate',
+        onTap: () => open(const HeartRateMonitorScreen()),
+      ),
+      _ToolTile(
+        icon: Icons.directions_run,
+        label: 'VO2 Max Training',
+        onTap: () => open(const VO2MaxTrainingScreen()),
+      ),
+    ];
 
-    // Take the most recent workouts
-    final recentWorkouts = completedWorkouts.take(5).toList();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Recent Workouts',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        recentWorkouts.isEmpty
-            ? const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text(
-                    'No completed workouts yet. Complete a workout to see it here!',
-                    style: TextStyle(fontSize: 16),
-                  ),
-                ),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: recentWorkouts.length,
-                itemBuilder: (context, index) {
-                  final workout = recentWorkouts[index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      title: Text(workout.name),
-                      subtitle: Text(
-                        workout.completedDate != null
-                            ? 'Completed on ${DateFormat('MMM d').format(workout.completedDate!)}'
-                            : 'Completed',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        // Navigate to workout edit screen
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                ExerciseDetailScreen.editWorkout(
-                              workoutId: workout.id,
-                            ),
-                          ),
-                        ).then((_) => _refreshWorkouts());
-                      },
-                    ),
-                  );
-                },
-              ),
-      ],
-    );
-  }
-
-  Widget _buildQuickActionsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Quick Actions',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 120,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              _buildActionCard(
-                icon: Icons.scale,
-                title: 'Find Your Weight',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const WeightTestSelectionScreen(),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(width: 12),
-              _buildActionCard(
-                icon: Icons.sports_mma, // Better boxing icon
-                title: 'Boxing Cardio',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const BoxingCardioScreen(),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(width: 12),
-              _buildActionCard(
-                icon: Icons.monitor_heart,
-                title: 'Heart Rate',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const HeartRateMonitorScreen(),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(width: 12),
-              _buildActionCard(
-                icon: Icons.flash_on,
-                title: 'Start Empty Workout',
-                onTap: () => _createNewWorkout(context),
-              ),
-              const SizedBox(width: 12),
-              _buildActionCard(
-                icon: Icons.trending_up,
-                title: 'Track Progress',
-                onTap: () {
-                  // Navigate to Progress tab (index 3)
-                  context.read<AppBloc>().add(const AppTabChanged(3));
-                },
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLoadingState() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
+    return Padding(
+      key: const Key('home_tools'),
+      padding: AppInsets.page,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Welcome card skeleton
-          const AnimatedLoadingCard(height: 120),
-          const SizedBox(height: 24),
-
-          // Upcoming workouts skeleton
-          const AnimatedLoadingCard(height: 24, width: 180),
-          const SizedBox(height: 8),
-          ...List.generate(
-              2,
-              (index) => const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: WorkoutCardSkeleton(),
-                  )),
-          const SizedBox(height: 24),
-
-          // Recent workouts skeleton
-          const AnimatedLoadingCard(height: 24, width: 160),
-          const SizedBox(height: 8),
-          ...List.generate(
-              3,
-              (index) => const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: WorkoutCardSkeleton(),
-                  )),
+          for (var i = 0; i < tools.length; i += 2) ...[
+            if (i > 0) const SizedBox(height: Gap.sm),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: tools[i]),
+                  const SizedBox(width: Gap.sm),
+                  Expanded(
+                    child: i + 1 < tools.length
+                        ? tools[i + 1]
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildActionCard({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-  }) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeInOut,
-      // Fixed width for horizontal scrolling; wide enough that two-word
-      // labels ("Find Your Weight") wrap onto two lines instead of truncating.
-      width: 116,
-      child: Card(
-        elevation: 2,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () {
-              HapticFeedback.selectionClick();
-              onTap();
-            },
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8.0, vertical: 12.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  TweenAnimationBuilder<double>(
-                    duration: const Duration(milliseconds: 300),
-                    tween: Tween(begin: 0.8, end: 1.0),
-                    builder: (context, scale, child) {
-                      return Transform.scale(
-                        scale: scale,
-                        child: Icon(icon, size: 30),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    title,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelLarge
-                        ?.copyWith(fontWeight: FontWeight.bold, height: 1.2),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+  Widget _buildLoadingState() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(Gap.lg),
+      itemCount: 5,
+      itemBuilder: (context, index) => const WorkoutCardSkeleton(),
     );
   }
+
+  // -------------------------------------------------------------------------
+  // Suggestion loading
+  // -------------------------------------------------------------------------
 
   void _ensureAISuggestionFuture(List<Workout> workouts) {
     final signature = _buildSuggestionSignature(workouts);
     if (_aiSuggestionFuture == null || _aiSuggestionSignature != signature) {
       _aiSuggestionSignature = signature;
-      _aiSuggestionFuture = _getAIWorkoutSuggestion(workouts);
+      _aiSuggestionFuture = _loadSuggestion(workouts);
     }
   }
 
   void _refreshAISuggestion(List<Workout> workouts) {
     setState(() {
       _aiSuggestionSignature = _buildSuggestionSignature(workouts);
-      _aiSuggestionFuture = _getAIWorkoutSuggestion(workouts);
+      _aiSuggestionFuture = _loadSuggestion(workouts);
     });
   }
+
+  Future<String> _loadSuggestion(List<Workout> workouts) =>
+      (widget.suggestionLoader ?? _getAIWorkoutSuggestion)(workouts);
 
   String _buildSuggestionSignature(List<Workout> workouts) {
     final completedWorkouts =
@@ -756,9 +784,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return '${workouts.length}|$latestCompletion|$prefs';
   }
 
-  /// Get AI workout suggestion based on recent workout patterns
   /// True when suggestions come from the offline coach (no AI key / offline).
-  bool get _usingCoach => !AIService().isAvailable;
+  bool get _usingCoach =>
+      !(widget.isAiAvailable ?? () => AIService().isAvailable)();
 
   /// Offline, rules-based workout built by the progression coach.
   Future<Workout> _buildCoachWorkout(List<Workout> allWorkouts) async {
@@ -789,13 +817,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'Coach suggests: ${lines.join(', ')}';
   }
 
+  /// AI workout suggestion based on recent workout patterns; the coach's
+  /// plan when AI is unavailable or fails.
   Future<String> _getAIWorkoutSuggestion(List<Workout> allWorkouts) async {
-    final aiService = AIService();
-    if (!aiService.isAvailable) {
+    if (_usingCoach) {
       return _coachSuggestionText(allWorkouts);
     }
     try {
-      // Get recent completed workouts for analysis
       final recentWorkouts = allWorkouts
           .where((w) => w.isCompleted && w.completedDate != null)
           .where((w) => w.completedDate!.isAfter(
@@ -803,7 +831,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ))
           .toList();
 
-      return await aiService.suggestNextWorkout(
+      return await AIService().suggestNextWorkout(
         recentWorkouts: recentWorkouts,
         lookbackDays: 14,
         preferences: WorkoutPreferences.fromMap(
@@ -813,5 +841,125 @@ class _HomeScreenState extends State<HomeScreen> {
       AppLogger.warning('Failed to get AI workout suggestion: $e');
       return _coachSuggestionText(allWorkouts);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Small building blocks
+// ---------------------------------------------------------------------------
+
+/// Flat card matching [WorkoutListCard]: surfaceContainerLow, 12px radius,
+/// outlineVariant border, page gutter margin.
+class _FlatCard extends StatelessWidget {
+  const _FlatCard({super.key, required this.child, this.margin});
+
+  final Widget child;
+  final EdgeInsetsGeometry? margin;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: margin ??
+          const EdgeInsets.symmetric(horizontal: Gap.lg, vertical: Gap.xs),
+      clipBehavior: Clip.antiAlias,
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// One number in the "This week" row: value, label and last week's value.
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.label,
+    required this.value,
+    required this.comparison,
+  });
+
+  final String label;
+  final String value;
+  final String comparison;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final metaColor = theme.colorScheme.onSurfaceVariant;
+    Widget fit(Widget child) => FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: child,
+        );
+    return _FlatCard(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(Gap.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            fit(Text(label,
+                style: theme.textTheme.bodySmall?.copyWith(color: metaColor))),
+            fit(Text(value, style: theme.textTheme.titleMedium)),
+            fit(Text(comparison,
+                style: theme.textTheme.labelSmall?.copyWith(color: metaColor))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Icon + label tile in the Tools grid (label wraps to two lines, never
+/// truncated at normal sizes).
+class _ToolTile extends StatelessWidget {
+  const _ToolTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _FlatCard(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 56),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: Gap.md, vertical: Gap.sm),
+            child: Row(
+              children: [
+                Icon(icon, color: theme.colorScheme.primary),
+                const SizedBox(width: Gap.md),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelLarge,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
