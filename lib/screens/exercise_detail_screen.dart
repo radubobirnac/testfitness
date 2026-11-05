@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
 import 'package:testfitness/blocs/workout/workout_bloc.dart';
 import 'package:testfitness/blocs/workout/workout_event.dart';
 import 'package:testfitness/blocs/workout/workout_state.dart';
@@ -16,6 +17,8 @@ import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/models/workout_set.dart';
 import 'package:testfitness/screens/exercise_selection_sheet.dart';
+import 'package:testfitness/screens/workout_summary_screen.dart';
+import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/audio_player_util.dart';
 import 'package:testfitness/utils/app_logger.dart';
@@ -70,6 +73,18 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   Timer? _autosaveTimer;
   static const Duration _autosaveDebounce = Duration(milliseconds: 300);
   late final WorkoutBloc _workoutBloc;
+
+  // Progression coach: targets for new sets and the "Last / Target" hint
+  // under each exercise header. Hints are cached per exercise and recomputed
+  // when the bloc's workout list (or this workout's id) changes.
+  late final ProgressionCoach _coach = ProgressionCoach(
+    useMetric: UserPreferencesService().getUseMetricUnits(),
+  );
+  final Map<String, _CoachHint> _coachHints = {};
+  List<Workout>? _coachHintsSource;
+  String? _coachHintsExcludeId;
+  final Set<String> _expandedCoachHints = {};
+  bool _isFinishing = false;
 
   // Timer related variables (now managed by TimerBloc)
   // Local timer state removed - using TimerBloc instead
@@ -283,13 +298,17 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   }
 
   /// Weight & reps a new set for [exerciseId] should start with: a copy of the
-  /// previous set in this workout, else the exercise's most recent completed
-  /// set from past workouts, else 0 x 8.
+  /// previous set in this workout, else the coach's progression target from
+  /// past workouts, else the most recent completed set, else 0 x 8.
   ({double weight, int reps}) _defaultsForNewSet(String exerciseId) {
     final existing = _exerciseSets[exerciseId];
     if (existing != null && existing.isNotEmpty) {
       final last = existing.last;
       return (weight: last.weight, reps: last.reps);
+    }
+    final target = _coachHintFor(exerciseId).target;
+    if (target != null) {
+      return (weight: target.weight, reps: target.reps);
     }
     final previous = _lastCompletedSetFromHistory(exerciseId);
     if (previous != null) {
@@ -317,6 +336,31 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       }
     }
     return best;
+  }
+
+  /// Last session + progression target for [exerciseId], excluding this
+  /// workout. Cached until the bloc's workout list changes.
+  _CoachHint _coachHintFor(String exerciseId) {
+    final workouts = _workoutBloc.state.workouts;
+    if (!identical(workouts, _coachHintsSource) ||
+        _coachHintsExcludeId != _currentWorkoutId) {
+      _coachHints.clear();
+      _coachHintsSource = workouts;
+      _coachHintsExcludeId = _currentWorkoutId;
+    }
+    return _coachHints.putIfAbsent(exerciseId, () {
+      try {
+        return _CoachHint(
+          last: _coach.lastSession(exerciseId, workouts,
+              excludeWorkoutId: _currentWorkoutId),
+          target: _coach.target(exerciseId, workouts,
+              excludeWorkoutId: _currentWorkoutId),
+        );
+      } catch (e) {
+        AppLogger.debug('Progression coach failed for $exerciseId: $e');
+        return const _CoachHint();
+      }
+    });
   }
 
   void _addSetForExercise(String exerciseId) {
@@ -649,6 +693,131 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     }
   }
 
+  int get _completedSetCount =>
+      _getAllSets().where((set) => set.isCompleted).length;
+
+  /// Finish the workout: persist all sets, mark the workout completed
+  /// (completedDate = now), stop the rest timer and show the summary.
+  ///
+  /// Persisted with a *silent* bloc update/create so the bloc emits no
+  /// success message (which this screen's listener answers by popping to the
+  /// root) and the summary screen can replace this route instead.
+  Future<void> _finishWorkout() async {
+    if (_isFinishing) return;
+    final allSets = _getAllSets();
+    final doneCount = allSets.where((set) => set.isCompleted).length;
+    if (doneCount == 0) {
+      AnimatedFeedback.showSnackBar(
+        context,
+        'Complete at least one set to finish',
+        backgroundColor: Colors.red,
+      );
+      return;
+    }
+
+    final notDone = allSets.length - doneCount;
+    if (notDone > 0) {
+      final finishAnyway = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('$notDone ${notDone == 1 ? 'set' : 'sets'} not done '
+              '— finish anyway?'),
+          content: const Text(
+              'Unfinished sets stay in the workout but are not counted.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Keep going'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Finish'),
+            ),
+          ],
+        ),
+      );
+      if (finishAnyway != true || !mounted) return;
+    }
+
+    final base = _baseWorkout();
+    if (base == null && _currentWorkoutId != null) {
+      // Existing workout that has not loaded yet: nothing safe to write.
+      AnimatedFeedback.showSnackBar(
+        context,
+        'Workout is still loading, try again',
+        backgroundColor: Colors.red,
+      );
+      return;
+    }
+
+    _isFinishing = true;
+    // Finishing supersedes any pending autosave (and the one in dispose()).
+    _autosaveTimer?.cancel();
+    _autosaveTimer = null;
+
+    final now = DateTime.now();
+    DateTime? firstDone;
+    for (final set in allSets) {
+      final at = set.completedAt;
+      if (set.isCompleted &&
+          at != null &&
+          (firstDone == null || at.isBefore(firstDone))) {
+        firstDone = at;
+      }
+    }
+    final durationMinutes = firstDone != null && !now.isBefore(firstDone)
+        ? max(1, now.difference(firstDone).inMinutes)
+        : null;
+
+    final Workout finished;
+    if (base != null) {
+      finished = base.copyWith(
+        name: _nameController.text,
+        sets: allSets,
+        isCompleted: true,
+        completedDate: now,
+        durationMinutes: durationMinutes,
+      );
+      _workoutBloc.add(WorkoutUpdateRequested(finished, silent: true));
+    } else {
+      finished = Workout.create(
+        name: _nameController.text,
+        scheduledDate: now,
+        sets: allSets,
+      ).copyWith(
+        isCompleted: true,
+        completedDate: now,
+        durationMinutes: durationMinutes,
+      );
+      _currentWorkoutId = finished.id;
+      _workoutBloc.add(WorkoutCreateRequested(finished, silent: true));
+    }
+    _persistedWorkout = finished;
+
+    context.read<TimerBloc>().add(const TimerStopped());
+    setState(() {
+      _hasUnsavedChanges = false;
+    });
+
+    final allWorkouts = [
+      ..._workoutBloc.state.workouts.where((w) => w.id != finished.id),
+      finished,
+    ];
+    final exerciseNames = {
+      for (final entry in _exercises.entries) entry.key: entry.value.name,
+    };
+    unawaited(Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => WorkoutSummaryScreen(
+          workout: finished,
+          allWorkouts: allWorkouts,
+          exerciseNames: exerciseNames,
+          useMetric: _coach.useMetric,
+        ),
+      ),
+    ));
+  }
+
   Future<void> _confirmDiscardChanges() async {
     final shouldDiscard = await showDialog<bool>(
       context: context,
@@ -684,7 +853,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   Widget build(BuildContext context) {
     return PopScope(
       canPop: !_hasUnsavedChanges,
-      onPopInvoked: (didPop) {
+      onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         _confirmDiscardChanges();
       },
@@ -892,6 +1061,8 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                                           ],
                                         ),
 
+                                        _buildCoachHint(context, exerciseId),
+
                                         if (_showExerciseDescription(
                                             exercise.description)) ...[
                                           const SizedBox(height: 8),
@@ -984,26 +1155,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16.0, vertical: 8.0),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  ElevatedButton(
-                                    onPressed: _hasUnsavedChanges
-                                        ? _confirmDiscardChanges
-                                        : () => Navigator.pop(context),
-                                    child: const Text('CANCEL'),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: (!isLoading &&
-                                            (_hasUnsavedChanges ||
-                                                _persistedWorkout != null))
-                                        ? _saveWorkout
-                                        : null,
-                                    child: const Text('SAVE'),
-                                  ),
-                                ],
-                              ),
+                              child: _buildActionBar(context, isLoading),
                             ),
                           ),
                         ],
@@ -1017,6 +1169,175 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         ),
       ),
     );
+  }
+
+  /// CANCEL / SAVE, plus a primary FINISH once at least one set is done
+  /// (SAVE then becomes secondary: save and leave without finishing).
+  Widget _buildActionBar(BuildContext context, bool isLoading) {
+    final canSave =
+        !isLoading && (_hasUnsavedChanges || _persistedWorkout != null);
+    final canFinish = !isLoading && !_isFinishing && _completedSetCount > 0;
+    final cancel = TextButton(
+      onPressed: _hasUnsavedChanges
+          ? _confirmDiscardChanges
+          : () => Navigator.pop(context),
+      child: const Text('CANCEL'),
+    );
+    if (!canFinish) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          cancel,
+          FilledButton(
+            onPressed: canSave ? _saveWorkout : null,
+            child: const Text('SAVE'),
+          ),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        cancel,
+        const Spacer(),
+        OutlinedButton(
+          onPressed: canSave ? _saveWorkout : null,
+          child: const Text('SAVE'),
+        ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: _finishWorkout,
+          icon: const Icon(Icons.flag),
+          label: const Text('FINISH'),
+        ),
+      ],
+    );
+  }
+
+  /// "Last (Oct 28): 185×8, 185×8, 185×7" and a target chip under the
+  /// exercise header. Tap the chip to show the coach's reasoning. Nothing is
+  /// shown when the exercise has no history.
+  Widget _buildCoachHint(BuildContext context, String exerciseId) {
+    final hint = _coachHintFor(exerciseId);
+    final last = hint.last;
+    final target = hint.target;
+    if (last == null && target == null) return const SizedBox.shrink();
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final expanded = _expandedCoachHints.contains(exerciseId);
+
+    Widget? chip;
+    if (target != null) {
+      final isDeload = target.reason == TargetReason.deload;
+      final isIncrease = target.reason == TargetReason.increaseWeight ||
+          target.reason == TargetReason.increaseReps;
+      // Deload uses the calmer secondary palette; progress the primary one.
+      final background = isDeload
+          ? colorScheme.secondaryContainer
+          : isIncrease
+              ? colorScheme.primaryContainer
+              : colorScheme.surfaceContainerHighest;
+      final foreground = isDeload
+          ? colorScheme.onSecondaryContainer
+          : isIncrease
+              ? colorScheme.onPrimaryContainer
+              : colorScheme.onSurfaceVariant;
+      final icon = isDeload
+          ? Icons.spa_outlined
+          : isIncrease
+              ? Icons.trending_up
+              : Icons.repeat;
+
+      chip = Tooltip(
+        message: target.message,
+        child: Material(
+          color: background,
+          shape: const StadiumBorder(),
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: () => setState(() {
+              if (!_expandedCoachHints.remove(exerciseId)) {
+                _expandedCoachHints.add(exerciseId);
+              }
+            }),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 16, color: foreground),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Target ${_formatTargetSet(target)} · '
+                      '${_formatTargetDelta(target)}',
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.labelLarge?.copyWith(color: foreground),
+                    ),
+                  ),
+                  Icon(expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 18, color: foreground),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (last != null)
+            Text(
+              'Last (${DateFormat.MMMd().format(last.date)}): '
+              '${last.formatSets()}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall
+                  ?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+          if (chip != null) ...[
+            const SizedBox(height: 6),
+            chip,
+          ],
+          if (target != null && expanded) ...[
+            const SizedBox(height: 6),
+            Text(
+              target.message,
+              style: textTheme.bodySmall
+                  ?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String get _unitShort => _coach.useMetric ? 'kg' : 'lb';
+
+  String _formatTargetSet(ProgressionTarget target) => target.weight > 0
+      ? '${_formatWeight(target.weight)}×${target.reps}'
+      : '×${target.reps}';
+
+  String _formatTargetDelta(ProgressionTarget target) {
+    switch (target.reason) {
+      case TargetReason.increaseWeight:
+      case TargetReason.deload:
+        final delta = target.weightDelta;
+        final isDeload = target.reason == TargetReason.deload;
+        if (delta == 0) return isDeload ? 'deload' : 'repeat';
+        final sign = delta > 0 ? '+' : '−';
+        final text = '$sign${_formatWeight(delta.abs())} $_unitShort';
+        return isDeload ? 'deload $text' : text;
+      case TargetReason.increaseReps:
+        final reps = max(1, target.repsDelta);
+        return '+$reps ${reps == 1 ? 'rep' : 'reps'}';
+      case TargetReason.repeat:
+        return 'repeat';
+    }
   }
 
   Widget _buildSetsHeader(BuildContext context) {
@@ -1359,6 +1680,15 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       ),
     );
   }
+}
+
+/// Coach data for one exercise: its last session and next target (both null
+/// when the exercise has no history).
+class _CoachHint {
+  final SessionSummary? last;
+  final ProgressionTarget? target;
+
+  const _CoachHint({this.last, this.target});
 }
 
 /// Allows a decimal weight: digits with at most one decimal separator and up

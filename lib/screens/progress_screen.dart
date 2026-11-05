@@ -19,10 +19,12 @@ import 'package:testfitness/widgets/weight_tracking_chart.dart';
 import 'package:testfitness/widgets/volume_progression_chart.dart';
 import 'package:testfitness/services/weight_tracking_service.dart';
 import 'package:testfitness/services/export_import_service.dart';
+import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/accessibility_helper.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
+import 'package:testfitness/widgets/weekly_check_in_card.dart';
 
 /// Progress tracking screen showing workout statistics and charts
 class ProgressScreen extends StatefulWidget {
@@ -33,9 +35,12 @@ class ProgressScreen extends StatefulWidget {
 }
 
 class _ProgressScreenState extends State<ProgressScreen> {
+  Map<String, Exercise> _exercisesById = const {};
+
   @override
   void initState() {
     super.initState();
+    _loadExercisesForCoach();
     // Load workouts when screen initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
@@ -111,6 +116,10 @@ class _ProgressScreenState extends State<ProgressScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Coach weekly check-in
+                _buildWeeklyCheckIn(workouts),
+                const SizedBox(height: 24),
+
                 // Overview Stats Cards
                 _buildOverviewStats(workouts, completedWorkouts),
                 const SizedBox(height: 24),
@@ -149,6 +158,37 @@ class _ProgressScreenState extends State<ProgressScreen> {
           );
         },
       ),
+    );
+  }
+
+  Future<void> _loadExercisesForCoach() async {
+    try {
+      final exerciseState = context.read<ExerciseBloc>().state;
+      final exercises = exerciseState.exercises.isNotEmpty
+          ? exerciseState.exercises
+          : await ExerciseRepository().getExercises();
+      if (!mounted) return;
+      setState(() {
+        _exercisesById = {for (final e in exercises) e.id: e};
+      });
+    } catch (_) {
+      // Check-in still renders without names/muscle groups.
+    }
+  }
+
+  Widget _buildWeeklyCheckIn(List<Workout> workouts) {
+    final prefs = UserPreferencesService();
+    WeeklyCheckIn? checkIn;
+    try {
+      checkIn = ProgressionCoach(useMetric: prefs.getUseMetricUnits())
+          .weeklyCheckIn(workouts, _exercisesById);
+    } catch (_) {
+      checkIn = null;
+    }
+    return WeeklyCheckInCard(
+      checkIn: checkIn,
+      exercisesById: _exercisesById,
+      weightUnitLabel: prefs.getWeightUnitLabel(),
     );
   }
 

@@ -13,6 +13,8 @@ import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/services/ai_workout_generator.dart';
+import 'package:testfitness/services/progression_coach.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
 import 'package:testfitness/widgets/workout_card_skeleton.dart';
@@ -117,69 +119,12 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
   }
 
   Future<Workout> _generateNextWorkoutFallback(List<Workout> workouts) async {
-    final cutoff = DateTime.now().subtract(const Duration(days: 2));
-    final recentExerciseIds = <String>{};
-    for (final workout in workouts) {
-      final date = workout.completedDate ?? workout.scheduledDate;
-      if (date != null && date.isAfter(cutoff)) {
-        recentExerciseIds.addAll(workout.exerciseIds);
-      }
-    }
-
     final exerciseRepository = ExerciseRepository();
     final allExercises = await exerciseRepository.getExercises();
-    final byId = {for (final exercise in allExercises) exercise.id: exercise};
-
-    final recentMuscles = <String>{};
-    for (final id in recentExerciseIds) {
-      final exercise = byId[id];
-      if (exercise == null) continue;
-      recentMuscles.addAll(_normalizeMuscleGroups(exercise.muscleGroup));
-    }
-
-    var candidates = allExercises.where((exercise) {
-      final groups = _normalizeMuscleGroups(exercise.muscleGroup);
-      if (groups.isEmpty) return true;
-      return groups.every((group) => !recentMuscles.contains(group));
-    }).toList();
-
-    if (candidates.isEmpty) {
-      candidates = allExercises;
-    }
-
-    candidates.shuffle(Random());
-    final selected = candidates.take(5).toList();
-
-    final sets = selected
-        .map((exercise) => WorkoutSet.create(
-              exerciseId: exercise.id,
-              reps: 8,
-              weight: 0,
-              isCompleted: false,
-            ))
-        .toList();
-
-    final avoided = recentMuscles.isEmpty
-        ? 'No recent muscle groups detected.'
-        : 'Avoided muscle groups from last 2 days: ${recentMuscles.join(', ')}.';
-
-    final notes = StringBuffer()
-      ..writeln('🧠 NEXT WORKOUT REASONING\n')
-      ..writeln(
-          'Rules-based fallback used because AI was unavailable or offline.')
-      ..writeln(
-          'Goal: avoid muscle fatigue by skipping muscles trained in the last 2 days.')
-      ..writeln(avoided)
-      ..writeln('Selected ${selected.length} exercises for a balanced session.');
-
-    return Workout(
-      id: 'workout_${DateTime.now().millisecondsSinceEpoch}',
-      name: 'Next Workout',
-      sets: sets,
-      scheduledDate: DateTime.now(),
-      isCompleted: false,
-      notes: notes.toString(),
+    final coach = ProgressionCoach(
+      useMetric: UserPreferencesService().getUseMetricUnits(),
     );
+    return coach.suggestNextWorkout(workouts, allExercises);
   }
 
   Future<void> _createNextWorkout(WorkoutState state) async {
@@ -204,7 +149,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
         if (mounted) {
           AnimatedFeedback.showSnackBar(
             context,
-            '${reason ?? 'AI unavailable.'} Created a rules-based next workout.',
+            '${reason ?? 'AI unavailable.'} Your coach built this workout from your history.',
             backgroundColor: Colors.orange,
           );
         }
@@ -212,11 +157,13 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     } catch (error) {
       AppLogger.warning('AI generation failed, falling back', error);
       workout = await _generateNextWorkoutFallback(state.workouts);
-      AnimatedFeedback.showSnackBar(
-        context,
-        'AI failed. Created a rules-based next workout.',
-        backgroundColor: Colors.orange,
-      );
+      if (mounted) {
+        AnimatedFeedback.showSnackBar(
+          context,
+          'AI failed. Your coach built this workout from your history.',
+          backgroundColor: Colors.orange,
+        );
+      }
     }
 
     if (!mounted) return;
@@ -234,7 +181,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
         ),
       ),
     ).then((_) {
-      if (context.mounted) {
+      if (mounted) {
         context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
       }
     });
@@ -299,7 +246,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
         ),
       ),
     ).then((_) {
-      if (context.mounted) {
+      if (mounted) {
         context.read<WorkoutBloc>().add(const WorkoutLoadRequested());
       }
     });
