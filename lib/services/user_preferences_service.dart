@@ -7,12 +7,28 @@ class UserPreferencesService {
   static const String _restTimerDurationKey = 'rest_timer_duration';
   static const String _useMetricUnitsKey = 'use_metric_units';
   static const String _playSoundOnTimerEndKey = 'play_sound_on_timer_end';
+  // Bar & plates are stored per unit so switching units never shows a
+  // 20 "lb" bar or 45 "kg" plates.
+  static const String _barWeightKgKey = 'bar_weight_kg';
+  static const String _barWeightLbKey = 'bar_weight_lb';
+  static const String _availablePlatesKgKey = 'available_plates_kg';
+  static const String _availablePlatesLbKey = 'available_plates_lb';
 
   // Default values
   static const int _defaultRestTimerDuration = 90; // Default 90 seconds
   static const bool _defaultUseMetricUnits = false; // Default to imperial (Lbs)
   static const bool _defaultPlaySoundOnTimerEnd =
       true; // Default to playing sound
+
+  /// Default bar weight: 20 kg Olympic bar / 45 lb bar.
+  static double defaultBarWeight({required bool metric}) =>
+      metric ? 20.0 : 45.0;
+
+  /// Standard plate sizes a typical gym has (largest first). Also the
+  /// default for [getAvailablePlates].
+  static List<double> standardPlates({required bool metric}) => metric
+      ? const [25, 20, 15, 10, 5, 2.5, 1.25]
+      : const [45, 35, 25, 10, 5, 2.5];
 
   /// Get the default rest timer duration
   static int get defaultRestTimerDuration => _defaultRestTimerDuration;
@@ -182,6 +198,87 @@ class UserPreferencesService {
     } catch (e) {
       AppLogger.error('Error resetting sound setting', e);
       return Future.value(false);
+    }
+  }
+
+  /// Bar weight in the given unit (defaults to the current unit setting).
+  double getBarWeight({bool? metric}) {
+    final useMetric = metric ?? getUseMetricUnits();
+    final fallback = defaultBarWeight(metric: useMetric);
+    if (!_initialized) {
+      AppLogger.warning('UserPreferencesService not initialized');
+      return fallback;
+    }
+    try {
+      final value =
+          _prefs.getDouble(useMetric ? _barWeightKgKey : _barWeightLbKey);
+      return (value != null && value >= 0) ? value : fallback;
+    } catch (e) {
+      AppLogger.error('Error getting bar weight', e);
+      return fallback;
+    }
+  }
+
+  /// Set bar weight in the given unit (defaults to the current unit setting).
+  Future<bool> setBarWeight(double weight, {bool? metric}) async {
+    if (!_initialized) {
+      AppLogger.warning('UserPreferencesService not initialized');
+      return false;
+    }
+    try {
+      final useMetric = metric ?? getUseMetricUnits();
+      return await _prefs.setDouble(
+          useMetric ? _barWeightKgKey : _barWeightLbKey, weight);
+    } catch (e) {
+      AppLogger.error('Error setting bar weight', e);
+      return false;
+    }
+  }
+
+  /// Plate sizes available at the user's gym, largest first, in the given
+  /// unit (defaults to the current unit setting). Unlimited pairs assumed.
+  List<double> getAvailablePlates({bool? metric}) {
+    final useMetric = metric ?? getUseMetricUnits();
+    final fallback = List<double>.of(standardPlates(metric: useMetric));
+    if (!_initialized) {
+      AppLogger.warning('UserPreferencesService not initialized');
+      return fallback;
+    }
+    try {
+      final stored = _prefs.getStringList(
+          useMetric ? _availablePlatesKgKey : _availablePlatesLbKey);
+      if (stored == null) return fallback;
+      final plates = stored
+          .map(double.tryParse)
+          .whereType<double>()
+          .where((p) => p > 0)
+          .toSet()
+          .toList()
+        ..sort((a, b) => b.compareTo(a));
+      return plates;
+    } catch (e) {
+      AppLogger.error('Error getting available plates', e);
+      return fallback;
+    }
+  }
+
+  /// Set the plate sizes available, in the given unit (defaults to the
+  /// current unit setting).
+  Future<bool> setAvailablePlates(List<double> plates, {bool? metric}) async {
+    if (!_initialized) {
+      AppLogger.warning('UserPreferencesService not initialized');
+      return false;
+    }
+    try {
+      final useMetric = metric ?? getUseMetricUnits();
+      final sorted = plates.where((p) => p > 0).toSet().toList()
+        ..sort((a, b) => b.compareTo(a));
+      return await _prefs.setStringList(
+          useMetric ? _availablePlatesKgKey : _availablePlatesLbKey,
+          sorted.map((p) => p.toString()).toList());
+    } catch (e) {
+      AppLogger.error('Error setting available plates', e);
+      return false;
     }
   }
 

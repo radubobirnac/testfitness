@@ -41,7 +41,8 @@ class DatabaseService {
       AppLogger.database("Opening database at $path");
       return await openDatabase(
         path,
-        version: 2, // Increment the version number for the database upgrade
+        // v2: fitness_metrics table. v3: workout_sets.is_warmup column.
+        version: 3,
         onCreate: (db, version) async {
           AppLogger.database("Creating database tables");
           await _createDatabase(db, version);
@@ -50,8 +51,8 @@ class DatabaseService {
         onUpgrade: (db, oldVersion, newVersion) async {
           AppLogger.database(
               "Upgrading database from $oldVersion to $newVersion");
-          // If upgrading from version 1 to 2, add the fitness_metrics table
-          if (oldVersion == 1) {
+          // v1 -> v2: add the fitness_metrics table
+          if (oldVersion < 2) {
             await db.execute('''
               CREATE TABLE fitness_metrics(
                 id TEXT PRIMARY KEY,
@@ -64,6 +65,12 @@ class DatabaseService {
               )
             ''');
             AppLogger.database("Added fitness_metrics table");
+          }
+          // v2 -> v3: warm-up flag on sets (existing sets are working sets)
+          if (oldVersion < 3) {
+            await db.execute('ALTER TABLE workout_sets '
+                'ADD COLUMN is_warmup INTEGER NOT NULL DEFAULT 0');
+            AppLogger.database("Added workout_sets.is_warmup column");
           }
         },
         onOpen: (db) {
@@ -117,6 +124,7 @@ class DatabaseService {
         completedAt INTEGER,
         restTimeSeconds INTEGER,
         notes TEXT,
+        is_warmup INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (workoutId) REFERENCES workouts (id) ON DELETE CASCADE,
         FOREIGN KEY (exerciseId) REFERENCES exercises (id) ON DELETE CASCADE
       )
@@ -260,8 +268,7 @@ class DatabaseService {
 
       // Insert sets
       for (final set in workout.sets) {
-        final Map<String, dynamic> setMap = set.toMap();
-        setMap['workoutId'] = workout.id;
+        final setMap = _setToRow(set, workout.id);
         await txn.insert(
           'workout_sets',
           setMap,
@@ -292,8 +299,7 @@ class DatabaseService {
 
       // Insert updated sets
       for (final set in workout.sets) {
-        final Map<String, dynamic> setMap = set.toMap();
-        setMap['workoutId'] = workout.id;
+        final setMap = _setToRow(set, workout.id);
         await txn.insert(
           'workout_sets',
           setMap,
@@ -301,6 +307,17 @@ class DatabaseService {
         );
       }
     });
+  }
+
+  /// A [WorkoutSet] as a `workout_sets` row. The model's `isWarmup` key is
+  /// stored in the snake_case `is_warmup` column ([WorkoutSet.fromMap] reads
+  /// either spelling).
+  static Map<String, dynamic> _setToRow(WorkoutSet set, String workoutId) {
+    final row = set.toMap();
+    row['workoutId'] = workoutId;
+    row['is_warmup'] = set.isWarmup ? 1 : 0;
+    row.remove('isWarmup');
+    return row;
   }
 
   /// Delete a workout and its sets

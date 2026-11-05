@@ -14,7 +14,7 @@ class SessionSummary {
   final String workoutId;
   final DateTime date;
 
-  /// Completed sets (reps > 0) for this exercise in that workout, logged order.
+  /// Completed working sets (reps > 0, no warm-ups) for this exercise in that workout, logged order.
   final List<WorkoutSet> sets;
 
   /// Set with the highest estimated 1RM.
@@ -159,6 +159,24 @@ class WeeklyCheckIn {
   });
 }
 
+/// One generated warm-up set.
+class WarmupSpec {
+  final double weight;
+  final int reps;
+
+  const WarmupSpec(this.weight, this.reps);
+
+  @override
+  bool operator ==(Object other) =>
+      other is WarmupSpec && other.weight == weight && other.reps == reps;
+
+  @override
+  int get hashCode => Object.hash(weight, reps);
+
+  @override
+  String toString() => 'WarmupSpec($weight × $reps)';
+}
+
 /// A completed set paired with its resolved date and owning workout.
 class _DatedSet {
   final WorkoutSet set;
@@ -220,7 +238,12 @@ class ProgressionCoach {
   static List<String> muscleGroupsOf(Exercise exercise) =>
       ExerciseMetadata.resolveBodyParts(exercise);
 
-  static bool _isCountable(WorkoutSet set) => set.isCompleted && set.reps > 0;
+  /// A completed working set with reps. Warm-up sets never count towards
+  /// history, targets, records, trends or weekly volume.
+  static bool isCountable(WorkoutSet set) =>
+      set.isCompleted && set.reps > 0 && !set.isWarmup;
+
+  static bool _isCountable(WorkoutSet set) => isCountable(set);
 
   // ---------------------------------------------------------------------------
   // History
@@ -730,6 +753,30 @@ class ProgressionCoach {
       }
     }
     return earliest;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Warm-ups
+  // ---------------------------------------------------------------------------
+
+  /// Warm-up ramp percentages and reps before a working set.
+  static const List<(double, int)> warmupRamp = [(0.5, 8), (0.7, 5), (0.85, 2)];
+
+  /// Warm-up sets before a working set of [workingWeight]: ~50% × 8,
+  /// 70% × 5, 85% × 2, rounded to the nearest 2.5 kg / 5 lb. A warm-up is
+  /// skipped when it would be at or below the empty bar ([barWeight], default
+  /// 20 kg / 45 lb), at or above the working weight, or not heavier than the
+  /// previous warm-up. Lightest first.
+  List<WarmupSpec> warmupSets(double workingWeight, {double? barWeight}) {
+    final bar = barWeight ?? (_useMetric ? 20.0 : 45.0);
+    final result = <WarmupSpec>[];
+    for (final (percent, reps) in warmupRamp) {
+      final weight = roundToStep(workingWeight * percent);
+      if (weight <= bar || weight >= workingWeight) continue;
+      if (result.isNotEmpty && weight <= result.last.weight) continue;
+      result.add(WarmupSpec(weight, reps));
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------

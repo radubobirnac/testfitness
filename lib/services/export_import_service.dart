@@ -71,7 +71,7 @@ class ExportImportService {
 
       // CSV Header
       buffer.writeln(
-          'Date,Workout Name,Exercise ID,Exercise Name,Muscle Group,Category,Sets,Reps,Weight,Duration (min),Completed');
+          'Date,Workout Name,Exercise ID,Exercise Name,Muscle Group,Category,Sets,Reps,Weight,Duration (min),Completed,Warmup');
 
       for (final workout in workouts) {
         final dateStr = workout.completedDate != null
@@ -94,6 +94,7 @@ class ExportImportService {
                 '0',
                 '${workout.durationMinutes ?? 0}',
                 '${workout.isCompleted}',
+                'false',
               ].map(_escapeCsv).join(','));
         } else {
           for (final set in workout.sets) {
@@ -114,6 +115,7 @@ class ExportImportService {
                   '${set.weight}',
                   '${workout.durationMinutes ?? 0}',
                   '${workout.isCompleted}',
+                  '${set.isWarmup}',
                 ].map(_escapeCsv).join(','));
           }
         }
@@ -448,7 +450,13 @@ class ExportImportService {
           ),
         );
 
-        final setOrder = _parseInt(values['setorder']);
+        final rawSetOrder = values['setorder']?.trim() ?? '';
+        final setOrder = _parseInt(rawSetOrder);
+        // Warm-up: our own "Warmup" column, Hevy's set_type "warmup", or a
+        // "W" set order (Strong). Missing = working set.
+        final isWarmup = _parseBool(values['warmup']) ||
+            (values['settype']?.trim().toLowerCase() ?? '') == 'warmup' ||
+            rawSetOrder.toUpperCase() == 'W';
         builder.addSet(
           WorkoutSet.create(
             exerciseId: exercise.id,
@@ -457,6 +465,7 @@ class ExportImportService {
             isCompleted: completed,
             completedAt: completed ? date : null,
             notes: setOrder != null ? 'set_order:$setOrder' : null,
+            isWarmup: isWarmup,
           ),
         );
       }
@@ -690,6 +699,8 @@ class ExportImportService {
   }
 
   static String _normalizeHeader(String normalized) {
+    if (normalized.contains('warmup')) return 'warmup';
+    if (normalized == 'settype') return 'settype';
     if (normalized.contains('workoutdate')) return 'date';
     if (normalized.contains('workoutname') || normalized == 'workout') {
       return 'workoutname';

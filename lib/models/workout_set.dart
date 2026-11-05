@@ -13,6 +13,10 @@ class WorkoutSet extends Equatable {
   final int? restTimeSeconds;
   final String? notes;
 
+  /// Warm-up sets are logged but ignored by the progression coach, records,
+  /// summary totals and "last time" hints.
+  final bool isWarmup;
+
   const WorkoutSet({
     required this.id,
     required this.exerciseId,
@@ -22,6 +26,7 @@ class WorkoutSet extends Equatable {
     this.completedAt,
     this.restTimeSeconds,
     this.notes,
+    this.isWarmup = false,
   });
 
   /// Create a new workout set with a generated ID
@@ -33,6 +38,7 @@ class WorkoutSet extends Equatable {
     DateTime? completedAt,
     int? restTimeSeconds,
     String? notes,
+    bool isWarmup = false,
   }) {
     return WorkoutSet(
       id: const Uuid().v4(),
@@ -43,6 +49,7 @@ class WorkoutSet extends Equatable {
       completedAt: completedAt,
       restTimeSeconds: restTimeSeconds,
       notes: notes,
+      isWarmup: isWarmup,
     );
   }
 
@@ -55,6 +62,7 @@ class WorkoutSet extends Equatable {
     DateTime? completedAt,
     int? restTimeSeconds,
     String? notes,
+    bool? isWarmup,
   }) {
     return WorkoutSet(
       id: id,
@@ -65,6 +73,7 @@ class WorkoutSet extends Equatable {
       completedAt: completedAt ?? this.completedAt,
       restTimeSeconds: restTimeSeconds ?? this.restTimeSeconds,
       notes: notes ?? this.notes,
+      isWarmup: isWarmup ?? this.isWarmup,
     );
   }
 
@@ -84,6 +93,7 @@ class WorkoutSet extends Equatable {
       'completedAt': completedAt?.millisecondsSinceEpoch,
       'restTimeSeconds': restTimeSeconds,
       'notes': notes,
+      'isWarmup': isWarmup ? 1 : 0,
     };
   }
 
@@ -127,6 +137,7 @@ class WorkoutSet extends Equatable {
         completedAt: completedAt,
         restTimeSeconds: map['restTimeSeconds'],
         notes: map['notes'],
+        isWarmup: parseWarmupFlag(map['isWarmup'] ?? map['is_warmup']),
       );
     } catch (e) {
       ErrorHandler.handleParsingError(e, null, 'WorkoutSet.fromMap');
@@ -141,6 +152,18 @@ class WorkoutSet extends Equatable {
     }
   }
 
+  /// Tolerant parse of a stored warm-up flag: 1/0, bool, "true"/"1"/"yes";
+  /// anything missing or unrecognised is false.
+  static bool parseWarmupFlag(Object? value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final v = value.trim().toLowerCase();
+      return v == '1' || v == 'true' || v == 'yes' || v == 'y';
+    }
+    return false;
+  }
+
   @override
   List<Object?> get props => [
         id,
@@ -151,5 +174,6 @@ class WorkoutSet extends Equatable {
         completedAt,
         restTimeSeconds,
         notes,
+        isWarmup,
       ];
 }

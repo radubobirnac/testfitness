@@ -89,6 +89,18 @@ void main() {
     expect(repeated, 1);
   });
 
+  testWidgets('Save as routine is disabled for a workout without sets',
+      (tester) async {
+    await pumpCard(tester);
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pumpAndSettle();
+    final item = tester.widget<PopupMenuItem<Object?>>(find.ancestor(
+      of: find.text('Save as routine'),
+      matching: find.byWidgetPredicate((w) => w is PopupMenuItem),
+    ));
+    expect(item.enabled, isFalse);
+  });
+
   testWidgets('delete requires confirmation', (tester) async {
     var deleted = 0;
     await pumpCard(tester, onDelete: () => deleted++);
