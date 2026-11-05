@@ -58,9 +58,10 @@ class _AIChatScreenState extends State<AIChatScreen> {
     _scrollToBottom();
 
     try {
-      // Check connectivity
-      if (!_aiService.isAvailable) {
-        throw AIServiceException('AI features require an internet connection. Please check your connection and try again.');
+      // Check API key and connectivity (distinct messages for each)
+      final unavailableReason = _aiService.unavailableReason;
+      if (unavailableReason != null) {
+        throw AIServiceException(unavailableReason);
       }
 
       // Get AI response

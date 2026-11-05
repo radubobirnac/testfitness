@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -61,12 +62,20 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   bool _hasUnsavedChanges = false;
   bool _suspendDirtyTracking = false;
 
+  // Autosave state: the last workout snapshot this screen persisted. Once set,
+  // local state is the source of truth and is no longer reloaded from the bloc.
+  Workout? _persistedWorkout;
+  Timer? _autosaveTimer;
+  static const Duration _autosaveDebounce = Duration(milliseconds: 300);
+  late final WorkoutBloc _workoutBloc;
+
   // Timer related variables (now managed by TimerBloc)
   // Local timer state removed - using TimerBloc instead
 
   @override
   void initState() {
     super.initState();
+    _workoutBloc = context.read<WorkoutBloc>();
 
     if (widget.workoutId != null) {
       // Load existing workout using BLoC
@@ -124,6 +133,11 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
 
   @override
   void dispose() {
+    // Persist any pending autosave before tearing down controllers.
+    if (_autosaveTimer?.isActive ?? false) {
+      _autosaveTimer!.cancel();
+      _autosave(fromDispose: true);
+    }
     _nameController.dispose();
     _nameController.removeListener(_handleNameChanged);
     _titleFocusNode.removeListener(_handleTitleFocusChange);
@@ -175,6 +189,52 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     });
   }
 
+  /// The persisted workout whose metadata (id, dates, notes...) should be
+  /// preserved when saving, or null if nothing has been persisted yet.
+  Workout? _baseWorkout() {
+    if (_persistedWorkout != null) return _persistedWorkout;
+    final current = _workoutBloc.state.currentWorkout;
+    if (_currentWorkoutId != null && current?.id == _currentWorkoutId) {
+      return current;
+    }
+    return null;
+  }
+
+  /// Schedule a silent, debounced save of the current workout so completed
+  /// sets survive the app being closed mid-workout.
+  void _scheduleAutosave() {
+    if (_suspendDirtyTracking) return;
+    _autosaveTimer?.cancel();
+    _autosaveTimer = Timer(_autosaveDebounce, () {
+      if (mounted) _autosave();
+    });
+  }
+
+  void _autosave({bool fromDispose = false}) {
+    final allSets = _getAllSets();
+    if (allSets.isEmpty) return;
+    final base = _baseWorkout();
+    Workout workout;
+    if (base != null) {
+      workout = base.copyWith(name: _nameController.text, sets: allSets);
+      _workoutBloc.add(WorkoutUpdateRequested(workout, silent: true));
+    } else {
+      // Existing workout that has not loaded yet: nothing safe to write.
+      if (_currentWorkoutId != null) return;
+      // New workout: create it on the first completed set.
+      if (!allSets.any((set) => set.isCompleted)) return;
+      workout = Workout.create(name: _nameController.text, sets: allSets);
+      _currentWorkoutId = workout.id;
+      _workoutBloc.add(WorkoutCreateRequested(workout, silent: true));
+    }
+    _persistedWorkout = workout;
+    if (!fromDispose && mounted) {
+      setState(() {
+        _hasUnsavedChanges = false;
+      });
+    }
+  }
+
   void _addExercise(Exercise exercise) {
     // Don't add if already present
     if (_exercises.containsKey(exercise.id)) {
@@ -197,6 +257,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       _addSetForExercise(exercise.id);
     });
     _markDirty();
+    _scheduleAutosave();
   }
 
   void _addSetForExercise(String exerciseId) {
@@ -216,6 +277,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       _repsControllers[setKey] = TextEditingController(text: '8');
     });
     _markDirty();
+    _scheduleAutosave();
   }
 
   void _removeSetForExercise(String exerciseId, int index) {
@@ -247,6 +309,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         }
       });
       _markDirty();
+      _scheduleAutosave();
     }
   }
 
@@ -276,6 +339,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                 _exercises.remove(exerciseId);
               });
               _markDirty();
+              _scheduleAutosave();
             },
             child: const Text('Remove'),
           ),
@@ -304,6 +368,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         );
       });
       _markDirty();
+      _scheduleAutosave();
 
       // Start or reset the timer when a set is marked as complete
       if (!wasCompleted) {
@@ -335,6 +400,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         // No need to update the controller text here since the change came from the controller
       });
       _markDirty();
+      _scheduleAutosave();
     }
   }
 
@@ -362,6 +428,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         // No need to update the controller text here since the change came from the controller
       });
       _markDirty();
+      _scheduleAutosave();
     }
   }
 
@@ -444,6 +511,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       _exercises.remove(oldExerciseId);
     });
     _markDirty();
+    _scheduleAutosave();
   }
 
   // Get all sets from all exercises
@@ -466,37 +534,26 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       return;
     }
 
-    if (widget.workoutId != null) {
-      // Update existing workout - we need to get the current workout from BLoC state
-      final workoutState = context.read<WorkoutBloc>().state;
-      final currentWorkout = workoutState.currentWorkout;
+    // An explicit save supersedes any pending autosave.
+    _autosaveTimer?.cancel();
 
-      if (currentWorkout != null) {
-        // Create updated workout with same ID but new sets
-        final updatedWorkout = Workout(
-          id: currentWorkout.id,
-          name: _nameController.text,
-          description: currentWorkout.description,
-          scheduledDate: currentWorkout.scheduledDate,
-          completedDate: currentWorkout.completedDate,
-          isCompleted: currentWorkout.isCompleted,
-          sets: allSets,
-          durationMinutes: currentWorkout.durationMinutes,
-          notes: currentWorkout.notes,
-        );
-
-        // Update the workout using BLoC
-        context.read<WorkoutBloc>().add(WorkoutUpdateRequested(updatedWorkout));
-      }
-    } else {
+    final base = _baseWorkout();
+    if (base != null) {
+      // Update the existing (or already autosaved) workout, keeping its
+      // id and metadata.
+      final updatedWorkout =
+          base.copyWith(name: _nameController.text, sets: allSets);
+      _persistedWorkout = updatedWorkout;
+      _workoutBloc.add(WorkoutUpdateRequested(updatedWorkout));
+    } else if (_currentWorkoutId == null) {
       // Create a new workout
       final workout = Workout.create(
         name: _nameController.text,
         sets: allSets,
       );
-
-      // Save the workout using BLoC
-      context.read<WorkoutBloc>().add(WorkoutCreateRequested(workout));
+      _currentWorkoutId = workout.id;
+      _persistedWorkout = workout;
+      _workoutBloc.add(WorkoutCreateRequested(workout));
     }
   }
 
@@ -519,24 +576,16 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       ),
     );
 
-    if (shouldDiscard != true) return;
+    if (shouldDiscard != true || !mounted) return;
 
-    if (widget.workoutId == null) {
-      if (mounted) {
-        Navigator.pop(context);
-      }
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _hasUnsavedChanges = false;
-      });
-      context
-          .read<WorkoutBloc>()
-          .add(WorkoutLoadByIdRequested(widget.workoutId!));
-      context.read<ExerciseBloc>().add(const ExerciseLoadRequested());
-    }
+    // Drop any pending autosave of the discarded edits and leave the screen.
+    // Whatever was already autosaved/saved stays persisted.
+    _autosaveTimer?.cancel();
+    _autosaveTimer = null;
+    setState(() {
+      _hasUnsavedChanges = false;
+    });
+    Navigator.pop(context);
   }
 
   @override
@@ -607,6 +656,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
 
               // Update local state when workout is loaded
               if (!_hasUnsavedChanges &&
+                  _persistedWorkout == null &&
                   state.currentWorkout != null &&
                   _currentWorkoutId == state.currentWorkout!.id) {
                 // We need to get exercises from ExerciseBloc to update local state
@@ -634,6 +684,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
 
               // Update local state when exercises are loaded and we have a current workout
               if (!_hasUnsavedChanges &&
+                  _persistedWorkout == null &&
                   state.exercises.isNotEmpty &&
                   _currentWorkoutId != null) {
                 final workoutState = context.read<WorkoutBloc>().state;
@@ -1073,7 +1124,9 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                               child: const Text('CANCEL'),
                             ),
                             ElevatedButton(
-                              onPressed: (!isLoading && _hasUnsavedChanges)
+                              onPressed: (!isLoading &&
+                                      (_hasUnsavedChanges ||
+                                          _persistedWorkout != null))
                                   ? _saveWorkout
                                   : null,
                               child: const Text('SAVE'),

@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:testfitness/blocs/app/app_bloc.dart';
 import 'package:testfitness/blocs/app/app_event.dart';
 import 'package:testfitness/blocs/app/app_state.dart';
+import 'package:testfitness/services/api_key_service.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/services/user_profile_service.dart';
 import 'package:testfitness/services/enhanced_tts_service.dart';
@@ -17,6 +18,8 @@ import 'package:testfitness/screens/performance_screen.dart';
 import 'package:testfitness/screens/ai_chat_screen.dart';
 import 'package:testfitness/screens/gemini_tts_test_screen.dart';
 import 'package:testfitness/screens/tts_analytics_screen.dart';
+
+enum _ApiKeyDialogResult { save, clear }
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -423,19 +426,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     // Theme Setting
                     _buildThemeSettingCard(context, state.isDarkMode),
 
-                    // Developer section
-                    const Padding(
-                      padding: EdgeInsets.all(16.0),
-                      child: Text(
-                        'Developer Tools',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                    // Developer section (debug builds only)
+                    if (kDebugMode) ...[
+                      const Padding(
+                        padding: EdgeInsets.all(16.0),
+                        child: Text(
+                          'Developer Tools',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
-                    ),
-
-                    _buildDeveloperToolsCard(context),
+                      _buildDeveloperToolsCard(context),
+                    ],
 
                     // Voice & Speech section
                     const Padding(
@@ -464,6 +468,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
 
                     _buildAIAssistantCard(context),
+
+                    // AI settings section (user-provided Gemini API key)
+                    const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text(
+                        'AI Settings',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+
+                    _buildAISettingsCard(context),
 
                     const SizedBox(height: 32),
                   ],
@@ -1046,6 +1064,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
 
+              // Developer-only tools (hidden in release builds)
+              if (kDebugMode) ...[
               const SizedBox(height: 8),
 
               // Gemini TTS Test Button
@@ -1093,6 +1113,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
               ),
+              ],
             ],
           ),
         ),
@@ -1250,6 +1271,100 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildAISettingsCard(BuildContext context) {
+    final hasKey = (ApiKeyService().cachedKey ?? '').isNotEmpty;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: ListTile(
+        leading: Icon(
+          Icons.key,
+          color: hasKey ? Colors.green : Colors.orange,
+        ),
+        title: const Text('Gemini API key'),
+        subtitle: Text(
+          hasKey
+              ? 'Configured. AI features are enabled.'
+              : 'Not set. Add your own key to enable AI features.',
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: _showGeminiKeyDialog,
+      ),
+    );
+  }
+
+  Future<void> _showGeminiKeyDialog() async {
+    final controller = TextEditingController();
+    final result = await showDialog<_ApiKeyDialogResult>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Gemini API key'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'Paste your API key',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Your key is stored only on this device and is sent only to '
+              'Google\'s Gemini API.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_ApiKeyDialogResult.clear),
+            child: const Text('Clear'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_ApiKeyDialogResult.save),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    final enteredKey = controller.text.trim();
+    controller.dispose();
+    if (result == null || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    if (result == _ApiKeyDialogResult.clear) {
+      await ApiKeyService().setGeminiKey(null);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Gemini API key removed from this device')),
+      );
+    } else {
+      if (enteredKey.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Please paste an API key first')),
+        );
+        return;
+      }
+      await ApiKeyService().setGeminiKey(enteredKey);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Gemini API key saved on this device')),
+      );
+    }
+    if (mounted) setState(() {});
   }
 
   String _formatTime(int seconds) {

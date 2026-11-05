@@ -1,5 +1,5 @@
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:testfitness/services/api_key_service.dart';
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/offline_indicator.dart';
@@ -10,20 +10,18 @@ import 'package:flutter_tts/flutter_tts.dart';
 /// **DISCLAIMER: AI features require an active internet connection**
 class AIService {
   static const String _defaultModelName = 'gemini-2.5-flash-lite';
-  late final String _modelName;
+  static const String _modelName = String.fromEnvironment('GEMINI_MODEL',
+      defaultValue: _defaultModelName);
 
-  String? _apiKey;
+  /// Key the current [_model] was built with; used to rebuild on key change.
+  String? _modelKey;
   GenerativeModel? _model;
   late final FlutterTts _tts;
   static AIService? _instance;
 
   AIService._internal() {
-    _apiKey = dotenv.env['GEMINI_API_KEY'];
-    _modelName = dotenv.env['GEMINI_MODEL'] ?? _defaultModelName;
-    if (_apiKey == null || _apiKey!.isEmpty) {
-      AppLogger.warning('GEMINI_API_KEY is not configured; AI features disabled');
-    } else {
-      _model = _buildModel(_apiKey!);
+    if (!hasApiKey) {
+      AppLogger.warning('Gemini API key is not configured; AI features disabled');
     }
 
     // Initialize FlutterTTS (interim solution until Dart SDK supports Gemini TTS)
@@ -36,9 +34,25 @@ class AIService {
     return _instance!;
   }
 
-  /// Check if AI features are available (requires internet connection)
-  bool get isAvailable =>
-      (_apiKey != null && _apiKey!.isNotEmpty) && ConnectivityService().isOnline;
+  String? get _apiKey => ApiKeyService().cachedKey;
+
+  /// Whether a Gemini API key is configured (user-saved or debug define).
+  bool get hasApiKey => _apiKey != null && _apiKey!.isNotEmpty;
+
+  /// Whether the device is currently online.
+  bool get isOnline => ConnectivityService().isOnline;
+
+  /// Check if AI features are available (requires API key and internet)
+  bool get isAvailable => hasApiKey && isOnline;
+
+  /// User-facing reason AI is unavailable, or null when it is available.
+  String? get unavailableReason {
+    if (!hasApiKey) return ApiKeyService.missingKeyMessage;
+    if (!isOnline) {
+      return 'AI features require an internet connection. Please check your connection and try again.';
+    }
+    return null;
+  }
 
   GenerativeModel _buildModel(String apiKey) {
     return GenerativeModel(
@@ -60,15 +74,20 @@ class AIService {
   }
 
   GenerativeModel _requireModel() {
-    if (_apiKey == null || _apiKey!.isEmpty) {
-      throw AIServiceException('GEMINI_API_KEY is not configured');
+    final key = _apiKey;
+    if (key == null || key.isEmpty) {
+      throw AIServiceException(ApiKeyService.missingKeyMessage);
     }
 
     if (!ConnectivityService().isOnline) {
       throw AIServiceException('AI features require an internet connection');
     }
 
-    _model ??= _buildModel(_apiKey!);
+    // Rebuild the model if the user changed their key.
+    if (_model == null || _modelKey != key) {
+      _model = _buildModel(key);
+      _modelKey = key;
+    }
     return _model!;
   }
 

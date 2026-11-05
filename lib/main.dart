@@ -1,26 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:testfitness/blocs/app/app_bloc.dart';
 import 'package:testfitness/blocs/workout/workout_bloc.dart';
 import 'package:testfitness/blocs/exercise/exercise_bloc.dart';
 import 'package:testfitness/blocs/timer/timer_bloc.dart';
 import 'package:testfitness/screens/app_loader.dart';
+import 'package:testfitness/services/api_key_service.dart';
 import 'package:testfitness/widgets/offline_indicator.dart';
 
 void main() async {
   // Initialize Flutter bindings first
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Load environment variables from .env file
-  try {
-    await dotenv.load(fileName: ".env");
-    print("✅ Environment variables loaded successfully");
-    print(
-        "🔑 GEMINI_API_KEY loaded: ${dotenv.env['GEMINI_API_KEY'] != null ? 'Yes (${dotenv.env['GEMINI_API_KEY']!.length} chars)' : 'No'}");
-  } catch (e) {
-    print("❌ Failed to load .env file: $e");
-  }
+  // Load the user's Gemini API key (stored on-device; never bundled).
+  await ApiKeyService().initialize();
 
   // Initialize connectivity tracking for offline-aware features.
   ConnectivityService().initialize();

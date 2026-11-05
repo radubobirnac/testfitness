@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/utils/app_logger.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:testfitness/services/api_key_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:testfitness/services/tts_analytics_service.dart';
@@ -113,17 +113,12 @@ class GeminiTTSService {
       AppLogger.info('Step 1: AudioPlayer initialized successfully');
 
       // Step 2: Get API key
-      AppLogger.info('Step 2: Loading API key from environment...');
-      _apiKey = dotenv.env['GEMINI_API_KEY'];
-      AppLogger.info(
-          'Step 2: API key loaded: ${_apiKey != null ? 'Yes (${_apiKey!.length} chars)' : 'No'}');
-
+      _apiKey = await ApiKeyService().getGeminiKey();
       if (_apiKey == null || _apiKey!.isEmpty) {
-        final errorMsg = 'Gemini API key not found in .env file';
-        AppLogger.error('Step 2: $errorMsg');
-        throw Exception(errorMsg);
+        AppLogger.warning('Step 2: Gemini API key is not configured');
+        throw Exception(ApiKeyService.missingKeyMessage);
       }
-      AppLogger.info('Step 2: API key validation passed');
+      AppLogger.info('Step 2: API key available');
 
       // Step 3: Load settings
       AppLogger.info('Step 3: Loading settings...');
@@ -222,6 +217,13 @@ class GeminiTTSService {
 
   /// Generate audio data from Gemini TTS API
   Future<Uint8List> _generateAudio(String text, String voice) async {
+    // Re-read the key each call so changes in AI settings take effect.
+    _apiKey = await ApiKeyService().getGeminiKey();
+    final apiKey = _apiKey;
+    if (apiKey == null || apiKey.isEmpty) {
+      throw Exception(ApiKeyService.missingKeyMessage);
+    }
+
     final url =
         'https://generativelanguage.googleapis.com/v1beta/models/$_selectedModel:generateContent';
 
@@ -243,33 +245,27 @@ class GeminiTTSService {
       }
     };
 
-    AppLogger.info('Gemini TTS Request URL: $url');
-    AppLogger.info('Gemini TTS Request Body: ${jsonEncode(requestBody)}');
+    final encodedBody = jsonEncode(requestBody);
+    AppLogger.info(
+        'Gemini TTS request: model=$_selectedModel, ${encodedBody.length} bytes');
 
     final response = await http.post(
-      Uri.parse('$url?key=$_apiKey'),
+      Uri.parse(url),
       headers: {
         'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
       },
-      body: jsonEncode(requestBody),
+      body: encodedBody,
     );
 
-    AppLogger.info('Gemini TTS Response Status: ${response.statusCode}');
-    AppLogger.info('Gemini TTS Response Headers: ${response.headers}');
-    AppLogger.info('Gemini TTS Response Body: ${response.body}');
+    AppLogger.info(
+        'Gemini TTS response: status=${response.statusCode}, ${response.bodyBytes.length} bytes');
 
     if (response.statusCode != 200) {
-      throw Exception(
-          'Gemini TTS API error: ${response.statusCode} - ${response.body}');
+      throw Exception('Gemini TTS API error: ${response.statusCode}');
     }
 
     final responseData = jsonDecode(response.body);
-
-    // Debug the response structure
-    AppLogger.info('Response structure: ${responseData.keys}');
-    if (responseData.containsKey('candidates')) {
-      AppLogger.info('Candidates structure: ${responseData['candidates']}');
-    }
 
     final audioBase64 = responseData['candidates'][0]['content']['parts'][0]
         ['inlineData']['data'];
@@ -424,15 +420,14 @@ class GeminiTTSService {
       AppLogger.info('Starting debug API call...');
 
       // Test API key first
-      if (_apiKey == null || _apiKey!.isEmpty) {
-        _apiKey = dotenv.env['GEMINI_API_KEY'];
-        if (_apiKey == null || _apiKey!.isEmpty) {
-          return {
-            'error': 'API key not found in .env file',
-            'success': false,
-            'step': 'API Key Check'
-          };
-        }
+      _apiKey = await ApiKeyService().getGeminiKey();
+      final apiKey = _apiKey;
+      if (apiKey == null || apiKey.isEmpty) {
+        return {
+          'error': ApiKeyService.missingKeyMessage,
+          'success': false,
+          'step': 'API Key Check'
+        };
       }
 
       final url =
@@ -457,13 +452,12 @@ class GeminiTTSService {
       };
 
       AppLogger.info('Debug API Call - URL: $url');
-      AppLogger.info(
-          'Debug API Call - API Key: ${_apiKey?.substring(0, 10)}...');
 
       final response = await http.post(
-        Uri.parse('$url?key=$_apiKey'),
+        Uri.parse(url),
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
         body: jsonEncode(requestBody),
       );
@@ -537,7 +531,6 @@ class GeminiTTSService {
     return {
       'isInitialized': _isInitialized,
       'hasApiKey': _apiKey != null && _apiKey!.isNotEmpty,
-      'apiKeyLength': _apiKey?.length ?? 0,
       'selectedVoice': _selectedVoice,
       'selectedModel': _selectedModel,
       'audioPlayerExists': _audioPlayer != null,

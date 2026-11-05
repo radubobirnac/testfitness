@@ -199,12 +199,15 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
           lookbackDays: 14,
         );
       } else {
+        final reason = aiService.unavailableReason;
         workout = await _generateNextWorkoutFallback(state.workouts);
-        AnimatedFeedback.showSnackBar(
-          context,
-          'AI unavailable. Created a rules-based next workout.',
-          backgroundColor: Colors.orange,
-        );
+        if (mounted) {
+          AnimatedFeedback.showSnackBar(
+            context,
+            '${reason ?? 'AI unavailable.'} Created a rules-based next workout.',
+            backgroundColor: Colors.orange,
+          );
+        }
       }
     } catch (error) {
       AppLogger.warning('AI generation failed, falling back', error);
@@ -266,12 +269,15 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
       );
     } catch (error) {
       AppLogger.warning('AI build failed, using fallback', error);
+      final reason = AIService().unavailableReason;
       workout = await _generateFocusWorkoutFallback(focus, state.workouts);
-      AnimatedFeedback.showSnackBar(
-        context,
-        'AI unavailable. Created a rules-based workout.',
-        backgroundColor: Colors.orange,
-      );
+      if (mounted) {
+        AnimatedFeedback.showSnackBar(
+          context,
+          '${reason ?? 'AI unavailable.'} Created a rules-based workout.',
+          backgroundColor: Colors.orange,
+        );
+      }
     }
 
     if (!mounted) return;

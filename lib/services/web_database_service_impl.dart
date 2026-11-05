@@ -78,7 +78,9 @@ class WebDatabaseServiceImpl implements DatabaseInterface {
                 ? DateTime.fromMillisecondsSinceEpoch(
                     workoutMap['completedDate'])
                 : null,
-            isCompleted: workoutMap['isCompleted'] == true,
+            // Workout.toMap stores 1/0; older data may hold a bool.
+            isCompleted: workoutMap['isCompleted'] == true ||
+                workoutMap['isCompleted'] == 1,
             durationMinutes: workoutMap['durationMinutes'],
             notes: workoutMap['notes'],
             sets: [], // Sets are loaded separately
