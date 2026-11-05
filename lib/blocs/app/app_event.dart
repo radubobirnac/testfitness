@@ -38,6 +38,11 @@ class AppPreferencesUpdated extends AppEvent {
   List<Object?> get props => [preferences];
 }
 
+/// Event to re-read stored settings into the state without writing any.
+class AppPreferencesReloaded extends AppEvent {
+  const AppPreferencesReloaded();
+}
+
 /// Event to clear any error messages
 class AppErrorCleared extends AppEvent {
   const AppErrorCleared();

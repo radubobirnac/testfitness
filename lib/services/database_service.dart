@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:testfitness/data/default_exercises.dart';
@@ -42,7 +43,8 @@ class DatabaseService {
       return await openDatabase(
         path,
         // v2: fitness_metrics table. v3: workout_sets.is_warmup column.
-        version: 3,
+        // v4: workout_sets.rpe and workout_sets.superset_group columns.
+        version: 4,
         onCreate: (db, version) async {
           AppLogger.database("Creating database tables");
           await _createDatabase(db, version);
@@ -71,6 +73,14 @@ class DatabaseService {
             await db.execute('ALTER TABLE workout_sets '
                 'ADD COLUMN is_warmup INTEGER NOT NULL DEFAULT 0');
             AppLogger.database("Added workout_sets.is_warmup column");
+          }
+          // v3 -> v4: effort rating and superset id (existing sets: null)
+          if (oldVersion < 4) {
+            await db.execute('ALTER TABLE workout_sets ADD COLUMN rpe REAL');
+            await db.execute(
+                'ALTER TABLE workout_sets ADD COLUMN superset_group TEXT');
+            AppLogger.database(
+                "Added workout_sets.rpe and superset_group columns");
           }
         },
         onOpen: (db) {
@@ -125,6 +135,8 @@ class DatabaseService {
         restTimeSeconds INTEGER,
         notes TEXT,
         is_warmup INTEGER NOT NULL DEFAULT 0,
+        rpe REAL,
+        superset_group TEXT,
         FOREIGN KEY (workoutId) REFERENCES workouts (id) ON DELETE CASCADE,
         FOREIGN KEY (exerciseId) REFERENCES exercises (id) ON DELETE CASCADE
       )
@@ -309,14 +321,20 @@ class DatabaseService {
     });
   }
 
-  /// A [WorkoutSet] as a `workout_sets` row. The model's `isWarmup` key is
-  /// stored in the snake_case `is_warmup` column ([WorkoutSet.fromMap] reads
-  /// either spelling).
+  /// A [WorkoutSet] as a `workout_sets` row. The model's `isWarmup` and
+  /// `supersetGroup` keys are stored in the snake_case `is_warmup` and
+  /// `superset_group` columns ([WorkoutSet.fromMap] reads either spelling).
+  @visibleForTesting
+  static Map<String, dynamic> setToRow(WorkoutSet set, String workoutId) =>
+      _setToRow(set, workoutId);
+
   static Map<String, dynamic> _setToRow(WorkoutSet set, String workoutId) {
     final row = set.toMap();
     row['workoutId'] = workoutId;
     row['is_warmup'] = set.isWarmup ? 1 : 0;
     row.remove('isWarmup');
+    row['superset_group'] = set.supersetGroup;
+    row.remove('supersetGroup');
     return row;
   }
 

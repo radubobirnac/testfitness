@@ -698,7 +698,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final latestCompletion = completedWorkouts
         .map((w) => w.completedDate!.millisecondsSinceEpoch)
         .fold<int>(0, (maxValue, value) => value > maxValue ? value : maxValue);
-    return '${workouts.length}|$latestCompletion';
+    // Include the workout-suggestion settings so changing them refreshes.
+    final prefs = UserPreferencesService().getWorkoutPreferences();
+    return '${workouts.length}|$latestCompletion|$prefs';
   }
 
   /// Get AI workout suggestion based on recent workout patterns
@@ -710,7 +712,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final exercises = await ExerciseRepository().getExercises();
     final coach =
         ProgressionCoach(useMetric: UserPreferencesService().getUseMetricUnits());
-    return coach.suggestNextWorkout(allWorkouts, exercises);
+    return coach.suggestNextWorkout(allWorkouts, exercises,
+        preferences: WorkoutPreferences.fromMap(
+            UserPreferencesService().getWorkoutPreferences()));
   }
 
   /// Short text describing the coach's suggested next workout.
@@ -749,6 +753,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return await aiService.suggestNextWorkout(
         recentWorkouts: recentWorkouts,
         lookbackDays: 14,
+        preferences: WorkoutPreferences.fromMap(
+            UserPreferencesService().getWorkoutPreferences()),
       );
     } catch (e) {
       AppLogger.warning('Failed to get AI workout suggestion: $e');

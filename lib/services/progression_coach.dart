@@ -9,6 +9,124 @@ enum TargetReason { increaseWeight, increaseReps, repeat, deload }
 /// Kinds of personal record the coach detects.
 enum RecordType { bestE1rm, heaviestWeight, mostVolume }
 
+/// The "Workout Suggestions" settings from the Profile screen, in a pure form
+/// the coach (and AI prompts) can use. The const default constructor applies
+/// no constraints, so `suggestNextWorkout` behaves exactly as without
+/// preferences; [WorkoutPreferences.fromMap] reads the stored settings.
+class WorkoutPreferences {
+  /// Max distinct muscle groups in a suggested workout; null = no limit.
+  final int? bodyPartLimit;
+
+  /// Target session length; drives the exercise count (about minutes / 9).
+  final int durationMinutes;
+
+  /// Never suggest Core exercises.
+  final bool excludeCore;
+
+  /// 'balanced', 'strength', 'hypertrophy', 'endurance', 'upper' or 'lower'.
+  final String focus;
+
+  /// Muscle groups to prefer, normalised (e.g. 'Chest', 'Legs').
+  final List<String> preferredBodyParts;
+
+  const WorkoutPreferences({
+    this.bodyPartLimit,
+    this.durationMinutes = 45,
+    this.excludeCore = false,
+    this.focus = 'balanced',
+    this.preferredBodyParts = const [],
+  });
+
+  /// Builds preferences from `UserPreferencesService.getWorkoutPreferences()`.
+  /// Missing or malformed values fall back to the profile defaults
+  /// (2 body parts, 45 min, core included, balanced, no preferred parts).
+  factory WorkoutPreferences.fromMap(Map<String, dynamic>? map) {
+    final m = map ?? const <String, dynamic>{};
+    int? asInt(Object? v) => v is num ? v.round() : int.tryParse('$v');
+    final parts = asInt(m['defaultBodyParts']) ?? 2;
+    final duration = asInt(m['defaultDurationMinutes']) ?? 45;
+    final rawPreferred = m['preferredBodyParts'];
+    final preferred = <String>[];
+    if (rawPreferred is Iterable) {
+      for (final p in rawPreferred) {
+        final name = _normaliseGroup('$p');
+        if (name.isNotEmpty && !preferred.contains(name)) preferred.add(name);
+      }
+    }
+    final focus = '${m['workoutFocus'] ?? 'balanced'}'.trim().toLowerCase();
+    return WorkoutPreferences(
+      bodyPartLimit: parts.clamp(1, 3),
+      durationMinutes: duration < 1 ? 45 : duration,
+      excludeCore: m['excludeCore'] == true,
+      focus: focus.isEmpty ? 'balanced' : focus,
+      preferredBodyParts: List.unmodifiable(preferred),
+    );
+  }
+
+  static String _normaliseGroup(String name) {
+    final t = name.trim();
+    if (t.isEmpty) return t;
+    if (t.toLowerCase() == 'shoulder') return 'Shoulders';
+    return '${t[0].toUpperCase()}${t.substring(1).toLowerCase()}';
+  }
+
+  /// Exercise count for [durationMinutes]: minutes / 9, clamped to 3-8.
+  int get exerciseCount => (durationMinutes / 9).round().clamp(3, 8);
+
+  /// Reps per set implied by [focus], or null (balanced / upper / lower)
+  /// to keep the coach's own targets.
+  int? get focusReps => switch (focus) {
+        'strength' => 5,
+        'hypertrophy' => 10,
+        'endurance' => 15,
+        _ => null,
+      };
+
+  /// [preferredBodyParts] plus the groups implied by an upper/lower focus.
+  List<String> get priorityGroups {
+    final groups = [...preferredBodyParts];
+    final implied = switch (focus) {
+      'upper' => const ['Chest', 'Back', 'Shoulders', 'Arms'],
+      'lower' => const ['Legs'],
+      _ => const <String>[],
+    };
+    for (final g in implied) {
+      if (!groups.contains(g)) groups.add(g);
+    }
+    return groups;
+  }
+
+  /// Plain-language lines describing these preferences for an AI prompt.
+  List<String> describeForPrompt() {
+    final lines = <String>[
+      'Session length: about $durationMinutes minutes '
+          '(roughly $exerciseCount exercises).',
+    ];
+    final limit = bodyPartLimit;
+    if (limit != null) {
+      lines.add('Train at most $limit muscle '
+          '${limit == 1 ? 'group' : 'groups'} in this workout.');
+    }
+    if (excludeCore) lines.add('Do NOT include any core/ab exercises.');
+    final reps = focusReps;
+    switch (focus) {
+      case 'upper':
+        lines.add('Training focus: upper body priority.');
+      case 'lower':
+        lines.add('Training focus: lower body priority.');
+      default:
+        lines.add(reps == null
+            ? 'Training focus: balanced.'
+            : 'Training focus: $focus, aim for about $reps reps per set.');
+    }
+    if (preferredBodyParts.isNotEmpty) {
+      lines.add('Preferred muscle groups (choose these first when recovered): '
+          '${preferredBodyParts.join(', ')}.');
+    }
+    return lines;
+  }
+}
+
 /// One workout's worth of completed sets for a single exercise.
 class SessionSummary {
   final String workoutId;
@@ -339,7 +457,8 @@ class ProgressionCoach {
 
     // Bodyweight: add a rep.
     if (w <= 0) {
-      final maxReps = last.sets.map((s) => s.reps).reduce((a, b) => a > b ? a : b);
+      final maxReps =
+          last.sets.map((s) => s.reps).reduce((a, b) => a > b ? a : b);
       final reps = maxReps + 1;
       return ProgressionTarget(
         weight: 0,
@@ -351,23 +470,52 @@ class ProgressionCoach {
       );
     }
 
-    if (_shouldDeload(sessions)) {
+    final stalled = _shouldDeload(sessions);
+    final grinding = !stalled && _shouldDeloadForEffort(sessions);
+    if (stalled || grinding) {
       var deloadWeight = roundToStep(w * 0.9);
       if (deloadWeight >= w) deloadWeight = roundToStep(w - weightStep);
+      final lighter = 'take a lighter week at '
+          '${formatWeight(deloadWeight)} × $goal, then build back up.';
       return ProgressionTarget(
         weight: deloadWeight,
         reps: goal,
         reason: TargetReason.deload,
         weightDelta: deloadWeight - w,
         repsDelta: 0,
-        message: 'Stalled for 3 sessions — take a lighter week at '
-            '${formatWeight(deloadWeight)} × $goal, then build back up.',
+        message: stalled
+            ? 'Stalled for 3 sessions — $lighter'
+            : 'Two all-out sessions in a row (RPE 9.5+) without progress — '
+                '$lighter',
       );
     }
 
     if (_hitAllWorkingSets(last)) {
-      var next = roundToStep(w + weightStep);
-      if (next <= w) next = roundToStep(w + 2 * weightStep);
+      final rpes = working.map((s) => s.rpe).toList();
+      final rated = rpes.whereType<double>().toList();
+      final hardest =
+          rated.isEmpty ? null : rated.reduce((a, b) => a > b ? a : b);
+
+      // A grinder: reps were hit but only just. Own the weight first.
+      if (hardest != null && hardest >= 9.5) {
+        final repeatWeight = roundToStep(w);
+        return ProgressionTarget(
+          weight: repeatWeight,
+          reps: goal,
+          reason: TargetReason.repeat,
+          weightDelta: repeatWeight - w,
+          repsDelta: 0,
+          message: 'Last time was a grinder (RPE ${formatNumber(hardest)}) — '
+              'repeat the weight and own it.',
+        );
+      }
+
+      // Every working set rated RPE 7 or easier: take a double step.
+      final easy =
+          rated.length == rpes.length && hardest != null && hardest <= 7;
+      final steps = easy ? 2 : 1;
+      var next = roundToStep(w + steps * weightStep);
+      if (next <= w) next = roundToStep(w + (steps + 1) * weightStep);
       final delta = next - w;
       return ProgressionTarget(
         weight: next,
@@ -375,8 +523,11 @@ class ProgressionCoach {
         reason: TargetReason.increaseWeight,
         weightDelta: delta,
         repsDelta: 0,
-        message: 'Hit $goal reps on every set last time — '
-            'add ${formatWeight(delta)}.',
+        message: easy
+            ? 'Hit $goal reps on every set at RPE ${formatNumber(hardest)} '
+                'or easier — that was light, add ${formatWeight(delta)}.'
+            : 'Hit $goal reps on every set last time — '
+                'add ${formatWeight(delta)}.',
       );
     }
 
@@ -422,6 +573,27 @@ class ProgressionCoach {
     return true;
   }
 
+  /// Average RPE of the rated sets in [sets], or null when none is rated.
+  static double? averageRpe(Iterable<WorkoutSet> sets) {
+    final rated = sets.map((s) => s.rpe).whereType<double>().toList();
+    if (rated.isEmpty) return null;
+    return rated.reduce((a, b) => a + b) / rated.length;
+  }
+
+  /// The last 2 sessions both averaged RPE >= 9.5 (over their rated sets) and
+  /// the newest did not improve best e1RM by > 1% over the one before.
+  bool _shouldDeloadForEffort(List<SessionSummary> newestFirst) {
+    if (newestFirst.length < 2) return false;
+    final newest = newestFirst[0];
+    final previous = newestFirst[1];
+    if (newest.topSet.weight <= 0) return false;
+    for (final session in [newest, previous]) {
+      final avg = averageRpe(session.sets);
+      if (avg == null || avg < 9.5) return false;
+    }
+    return newest.bestE1rm <= previous.bestE1rm * 1.01;
+  }
+
   // ---------------------------------------------------------------------------
   // Trends
   // ---------------------------------------------------------------------------
@@ -443,9 +615,8 @@ class ProgressionCoach {
 
     double? change;
     if (points.length >= 2 && points.first.value > 0) {
-      change = (points.last.value - points.first.value) /
-          points.first.value *
-          100;
+      change =
+          (points.last.value - points.first.value) / points.first.value * 100;
     }
 
     var plateau = false;
@@ -522,13 +693,15 @@ class ProgressionCoach {
           }
         }
         if (sessionSets.isNotEmpty) {
-          final v = sessionSets.fold<double>(0, (a, s) => a + s.weight * s.reps);
+          final v =
+              sessionSets.fold<double>(0, (a, s) => a + s.weight * s.reps);
           if (prevVolume == null || v > prevVolume) prevVolume = v;
         }
       }
       final hasHistory = previousSets.isNotEmpty;
 
-      final summary = _buildSummary(workout.id, refDate ?? DateTime(0), current);
+      final summary =
+          _buildSummary(workout.id, refDate ?? DateTime(0), current);
 
       // Best e1RM.
       double? prevE1rm;
@@ -572,8 +745,7 @@ class ProgressionCoach {
       }
 
       // Most volume in a single session.
-      if (summary.volume > 0 &&
-          (!hasHistory || summary.volume > prevVolume!)) {
+      if (summary.volume > 0 && (!hasHistory || summary.volume > prevVolume!)) {
         records.add(PersonalRecord(
           exerciseId: exerciseId,
           type: RecordType.mostVolume,
@@ -681,15 +853,14 @@ class ProgressionCoach {
     final neglected = monthGroups.difference(recentGroups).toList()..sort();
 
     // Records this week.
-    final weekWorkouts = workouts
-        .where((w) => workoutIdsThisWeek.contains(w.id))
-        .toList()
-      ..sort((a, b) {
-        final da = _earliestDate(a) ?? weekStart;
-        final db = _earliestDate(b) ?? weekStart;
-        final c = da.compareTo(db);
-        return c != 0 ? c : a.id.compareTo(b.id);
-      });
+    final weekWorkouts =
+        workouts.where((w) => workoutIdsThisWeek.contains(w.id)).toList()
+          ..sort((a, b) {
+            final da = _earliestDate(a) ?? weekStart;
+            final db = _earliestDate(b) ?? weekStart;
+            final c = da.compareTo(db);
+            return c != 0 ? c : a.id.compareTo(b.id);
+          });
     final records = <PersonalRecord>[];
     for (final workout in weekWorkouts) {
       final dateBySetId = {
@@ -793,12 +964,22 @@ class ProgressionCoach {
   /// 3. If nothing qualified at all, the most overdue exercises with history
   ///    are used regardless of recovery so the workout is never empty.
   /// Ties are broken by exercise name then id — no randomness.
+  ///
+  /// [preferences] (optional) shape the pick: Core can be excluded, preferred
+  /// groups are chosen first among recovered exercises, the workout is
+  /// limited to `bodyPartLimit` muscle groups (unless that empties it), the
+  /// exercise count follows the duration (unless [exerciseCount] is given),
+  /// and a strength/hypertrophy/endurance focus sets 5/10/15 reps where the
+  /// coach has no target. `const WorkoutPreferences()` changes nothing.
   Workout suggestNextWorkout(
     List<Workout> workouts,
     List<Exercise> exercises, {
     DateTime? now,
-    int exerciseCount = 5,
+    int? exerciseCount,
+    WorkoutPreferences? preferences,
   }) {
+    final prefs = preferences ?? const WorkoutPreferences();
+    final count = exerciseCount ?? preferences?.exerciseCount ?? 5;
     final reference = now ?? DateTime.now();
     final recoveryCutoff = reference.subtract(const Duration(hours: 48));
     final weekCutoff = reference.subtract(const Duration(days: 7));
@@ -816,7 +997,8 @@ class ProgressionCoach {
       final prev = lastTrained[id];
       if (prev == null || d.date.isAfter(prev)) lastTrained[id] = d.date;
       final exercise = byId[id];
-      final groups = exercise == null ? const <String>[] : muscleGroupsOf(exercise);
+      final groups =
+          exercise == null ? const <String>[] : muscleGroupsOf(exercise);
       if (d.date.isAfter(recoveryCutoff)) {
         recentExerciseIds.add(id);
         recentGroups.addAll(groups);
@@ -827,6 +1009,13 @@ class ProgressionCoach {
         }
       }
     }
+
+    // Exercises the user is willing to do at all.
+    final pool = prefs.excludeCore
+        ? exercises.where((e) => !muscleGroupsOf(e).contains('Core')).toList()
+        : exercises;
+    final priority = prefs.priorityGroups.toSet();
+    bool preferred(Exercise e) => muscleGroupsOf(e).any(priority.contains);
 
     int byName(Exercise a, Exercise b) {
       final c = a.name.toLowerCase().compareTo(b.name.toLowerCase());
@@ -839,47 +1028,76 @@ class ProgressionCoach {
     }
 
     final withHistory =
-        exercises.where((e) => lastTrained.containsKey(e.id)).toList()
+        pool.where((e) => lastTrained.containsKey(e.id)).toList()
           ..sort((a, b) {
             final c = lastTrained[a.id]!.compareTo(lastTrained[b.id]!);
             return c != 0 ? c : byName(a, b);
           });
 
-    final selected = <Exercise>[];
-    for (final e in withHistory) {
-      if (selected.length >= exerciseCount) break;
-      if (recovered(e)) selected.add(e);
+    int load(Exercise e) {
+      final groups = muscleGroupsOf(e);
+      if (groups.isEmpty) return 1 << 30;
+      return groups
+          .map((g) => groupSetsThisWeek[g] ?? 0)
+          .reduce((a, b) => a < b ? a : b);
     }
 
-    final fillers = <Exercise>[];
-    if (selected.length < exerciseCount) {
-      int load(Exercise e) {
-        final groups = muscleGroupsOf(e);
-        if (groups.isEmpty) return 1 << 30;
-        return groups
-            .map((g) => groupSetsThisWeek[g] ?? 0)
-            .reduce((a, b) => a < b ? a : b);
+    final newCandidates = pool
+        .where((e) => !lastTrained.containsKey(e.id) && recovered(e))
+        .toList()
+      ..sort((a, b) {
+        final c = load(a).compareTo(load(b));
+        return c != 0 ? c : byName(a, b);
+      });
+    final recoveredHistory = withHistory.where(recovered).toList();
+
+    // Candidates in pick order (record: exercise, hasHistory). Preferred
+    // groups first (history, then new), then the rest; without preferred
+    // groups this is simply history then new exercises.
+    final ordered = <(Exercise, bool)>[
+      for (final e in recoveredHistory.where(preferred)) (e, true),
+      for (final e in newCandidates.where(preferred)) (e, false),
+      for (final e in recoveredHistory.where((e) => !preferred(e))) (e, true),
+      for (final e in newCandidates.where((e) => !preferred(e))) (e, false),
+    ];
+
+    // Greedy pick of up to [count], keeping the number of distinct muscle
+    // groups within the body-part limit when [limitGroups] is set.
+    List<(Exercise, bool)> pick(List<(Exercise, bool)> candidates,
+        {required bool limitGroups}) {
+      final limit = limitGroups ? prefs.bodyPartLimit : null;
+      final groups = <String>{};
+      final result = <(Exercise, bool)>[];
+      for (final c in candidates) {
+        if (result.length >= count) break;
+        final g = muscleGroupsOf(c.$1);
+        if (limit != null && groups.union(g.toSet()).length > limit) continue;
+        groups.addAll(g);
+        result.add(c);
       }
-
-      final candidates = exercises
-          .where((e) => !lastTrained.containsKey(e.id) && recovered(e))
-          .toList()
-        ..sort((a, b) {
-          final c = load(a).compareTo(load(b));
-          return c != 0 ? c : byName(a, b);
-        });
-      for (final e in candidates) {
-        if (selected.length + fillers.length >= exerciseCount) break;
-        fillers.add(e);
-      }
+      return result;
     }
 
-    if (selected.isEmpty && fillers.isEmpty) {
-      selected.addAll(withHistory.take(exerciseCount));
+    var picked = pick(ordered, limitGroups: true);
+    if (picked.isEmpty) picked = pick(ordered, limitGroups: false);
+    if (picked.isEmpty) {
+      final fallback = [for (final e in withHistory) (e, true)];
+      picked = pick(fallback, limitGroups: true);
+      if (picked.isEmpty) picked = pick(fallback, limitGroups: false);
     }
 
+    final hasFillers = picked.any((p) => !p.$2);
+
+    final focusReps = prefs.focusReps;
     final sets = <WorkoutSet>[];
-    for (final e in selected) {
+    for (final (e, hasHistory) in picked) {
+      if (!hasHistory) {
+        for (var i = 0; i < 3; i++) {
+          sets.add(WorkoutSet.create(
+              exerciseId: e.id, reps: focusReps ?? 8, weight: 0));
+        }
+        continue;
+      }
       final t = target(e.id, workouts);
       double weight;
       int reps;
@@ -890,14 +1108,18 @@ class ProgressionCoach {
         final last = lastSession(e.id, workouts);
         weight = last?.topSet.weight ?? 0;
         reps = last?.topSet.reps ?? 8;
+        if (focusReps != null && focusReps != reps) {
+          // Keep the same estimated 1RM at the focus rep goal.
+          if (weight > 0) {
+            final e1rm = estimate1RM(weight, reps);
+            weight = roundToStep(e1rm / (1 + focusReps / 30));
+          }
+          reps = focusReps;
+        }
       }
       for (var i = 0; i < 3; i++) {
-        sets.add(WorkoutSet.create(exerciseId: e.id, reps: reps, weight: weight));
-      }
-    }
-    for (final e in fillers) {
-      for (var i = 0; i < 3; i++) {
-        sets.add(WorkoutSet.create(exerciseId: e.id, reps: 8, weight: 0));
+        sets.add(
+            WorkoutSet.create(exerciseId: e.id, reps: reps, weight: weight));
       }
     }
 
@@ -908,8 +1130,12 @@ class ProgressionCoach {
       final groups = recentGroups.toList()..sort();
       notes.write('Resting ${groups.join(', ')} (trained in the last 48 h).');
     }
-    if (fillers.isNotEmpty) {
+    if (hasFillers) {
       notes.write(' Added new exercises for under-trained muscles.');
+    }
+    if (focusReps != null) {
+      notes.write(' ${prefs.focus[0].toUpperCase()}'
+          '${prefs.focus.substring(1)} focus: $focusReps reps per set.');
     }
 
     return Workout.create(

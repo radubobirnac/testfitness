@@ -643,4 +643,185 @@ void main() {
       expect(order(w).length, 3);
     });
   });
+
+  group('suggestNextWorkout with WorkoutPreferences', () {
+    final now = DateTime(2026, 11, 4, 12);
+    const library = [
+      Exercise(id: 'bench', name: 'Bench Press', muscleGroup: 'Chest'),
+      Exercise(id: 'fly', name: 'Cable Fly', muscleGroup: 'Chest'),
+      Exercise(id: 'squat', name: 'Back Squat', muscleGroup: 'Legs'),
+      Exercise(id: 'row', name: 'Barbell Row', muscleGroup: 'Back'),
+      Exercise(id: 'curl', name: 'Biceps Curl', muscleGroup: 'Arms'),
+      Exercise(id: 'ohp', name: 'Overhead Press', muscleGroup: 'Shoulders'),
+      Exercise(id: 'plank', name: 'Plank', muscleGroup: 'Core'),
+      Exercise(id: 'pecdeck', name: 'Pec Deck', muscleGroup: 'Chest'),
+    ];
+    List<Workout> history() => [
+          _session('p-bench', now.subtract(const Duration(hours: 24)),
+              'bench', 100, [8, 8, 8]),
+          _session('p-fly', now.subtract(const Duration(days: 10)), 'fly', 20,
+              [12, 12]),
+          _session('p-squat', now.subtract(const Duration(days: 5)), 'squat',
+              140, [5, 5, 4]),
+          _session('p-row', now.subtract(const Duration(days: 3)), 'row', 80,
+              [8, 8]),
+          _session('p-curl', now.subtract(const Duration(days: 12)), 'curl',
+              15, [10, 10]),
+        ];
+
+    List<String> order(Workout w) {
+      final ids = <String>[];
+      for (final s in w.sets) {
+        if (!ids.contains(s.exerciseId)) ids.add(s.exerciseId);
+      }
+      return ids;
+    }
+
+    List<String> setsOf(Workout w) =>
+        [for (final s in w.sets) '${s.exerciseId}:${s.weight}x${s.reps}'];
+
+    test('const default preferences change nothing', () {
+      final plain = kg.suggestNextWorkout(history(), library, now: now);
+      final withPrefs = kg.suggestNextWorkout(history(), library,
+          now: now, preferences: const WorkoutPreferences());
+      expect(order(withPrefs), order(plain));
+      expect(setsOf(withPrefs), setsOf(plain));
+      expect(withPrefs.notes, plain.notes);
+    });
+
+    test('fromMap reads the profile defaults and values', () {
+      final p = WorkoutPreferences.fromMap({});
+      expect(p.bodyPartLimit, 2);
+      expect(p.durationMinutes, 45);
+      expect(p.exerciseCount, 5);
+      expect(p.excludeCore, isFalse);
+      expect(p.focus, 'balanced');
+      expect(p.focusReps, isNull);
+      expect(p.preferredBodyParts, isEmpty);
+      final q = WorkoutPreferences.fromMap({
+        'defaultBodyParts': 3,
+        'defaultDurationMinutes': 60,
+        'excludeCore': true,
+        'workoutFocus': 'Strength',
+        'preferredBodyParts': ['chest', 'Legs', 'shoulder'],
+      });
+      expect(q.bodyPartLimit, 3);
+      expect(q.exerciseCount, 7);
+      expect(q.excludeCore, isTrue);
+      expect(q.focus, 'strength');
+      expect(q.preferredBodyParts, ['Chest', 'Legs', 'Shoulders']);
+      expect(WorkoutPreferences.fromMap(null).bodyPartLimit, 2);
+    });
+
+    test('excludeCore never picks Core exercises', () {
+      final w = kg.suggestNextWorkout(history(), library,
+          now: now, preferences: const WorkoutPreferences(excludeCore: true));
+      expect(order(w), ['curl', 'squat', 'row', 'ohp']);
+      final fresh = kg.suggestNextWorkout([], library,
+          now: now,
+          exerciseCount: 8,
+          preferences: const WorkoutPreferences(excludeCore: true));
+      expect(order(fresh), isNot(contains('plank')));
+      expect(order(fresh).length, 7);
+    });
+
+    test('preferredBodyParts are chosen first among recovered exercises', () {
+      final w = kg.suggestNextWorkout(history(), library,
+          now: now,
+          preferences:
+              const WorkoutPreferences(preferredBodyParts: ['Shoulders']));
+      expect(order(w), ['ohp', 'curl', 'squat', 'row', 'plank']);
+      // A preferred group that is still recovering (Chest) is not forced in.
+      final chest = kg.suggestNextWorkout(history(), library,
+          now: now,
+          preferences: const WorkoutPreferences(preferredBodyParts: ['Chest']));
+      expect(order(chest), ['curl', 'squat', 'row', 'ohp', 'plank']);
+    });
+
+    test('bodyPartLimit caps distinct muscle groups', () {
+      final two = kg.suggestNextWorkout(history(), library,
+          now: now, preferences: const WorkoutPreferences(bodyPartLimit: 2));
+      expect(order(two), ['curl', 'squat']);
+      final preferredBack = kg.suggestNextWorkout(history(), library,
+          now: now,
+          preferences: const WorkoutPreferences(
+              bodyPartLimit: 1, preferredBodyParts: ['Back']));
+      expect(order(preferredBack), ['row']);
+    });
+
+    test('bodyPartLimit never leaves the workout empty', () {
+      const lib = [
+        Exercise(id: 'dip', name: 'Dip', muscleGroup: 'Chest, Arms'),
+      ];
+      final w = kg.suggestNextWorkout([], lib,
+          now: now, preferences: const WorkoutPreferences(bodyPartLimit: 1));
+      expect(order(w), ['dip']);
+    });
+
+    test('duration sets exercise count unless exerciseCount is explicit', () {
+      expect(const WorkoutPreferences(durationMinutes: 27).exerciseCount, 3);
+      expect(const WorkoutPreferences(durationMinutes: 20).exerciseCount, 3);
+      expect(const WorkoutPreferences(durationMinutes: 54).exerciseCount, 6);
+      expect(const WorkoutPreferences(durationMinutes: 120).exerciseCount, 8);
+      final short = kg.suggestNextWorkout([], library,
+          now: now, preferences: const WorkoutPreferences(durationMinutes: 27));
+      expect(order(short).length, 3);
+      final long = kg.suggestNextWorkout([], library,
+          now: now, preferences: const WorkoutPreferences(durationMinutes: 63));
+      expect(order(long).length, 7);
+      final explicit = kg.suggestNextWorkout([], library,
+          now: now,
+          exerciseCount: 2,
+          preferences: const WorkoutPreferences(durationMinutes: 63));
+      expect(order(explicit).length, 2);
+    });
+
+    test('workoutFocus sets reps for new exercises, keeps coach targets', () {
+      expect(const WorkoutPreferences(focus: 'strength').focusReps, 5);
+      expect(const WorkoutPreferences(focus: 'hypertrophy').focusReps, 10);
+      expect(const WorkoutPreferences(focus: 'endurance').focusReps, 15);
+      expect(const WorkoutPreferences(focus: 'balanced').focusReps, isNull);
+
+      for (final (focus, reps) in [
+        ('strength', 5),
+        ('hypertrophy', 10),
+        ('endurance', 15),
+      ]) {
+        final w = kg.suggestNextWorkout(history(), library,
+            now: now, preferences: WorkoutPreferences(focus: focus));
+        // New exercises (no history) use the focus rep goal.
+        final ohp = w.getSetsForExercise('ohp');
+        expect(ohp.every((s) => s.reps == reps && s.weight == 0), isTrue,
+            reason: focus);
+        // Exercises with a coach target keep it.
+        final curl = w.getSetsForExercise('curl');
+        expect(curl.every((s) => s.weight == 17.5 && s.reps == 10), isTrue,
+            reason: focus);
+        expect(w.notes, contains('$reps reps per set'));
+      }
+    });
+
+    test('upper/lower focus prefers matching groups', () {
+      final lower = kg.suggestNextWorkout(history(), library,
+          now: now, preferences: const WorkoutPreferences(focus: 'lower'));
+      expect(order(lower).first, 'squat');
+      expect(const WorkoutPreferences(focus: 'upper').priorityGroups,
+          containsAll(['Chest', 'Back', 'Shoulders', 'Arms']));
+    });
+
+    test('describeForPrompt mentions every preference', () {
+      final text = WorkoutPreferences.fromMap({
+        'defaultBodyParts': 1,
+        'defaultDurationMinutes': 30,
+        'excludeCore': true,
+        'workoutFocus': 'endurance',
+        'preferredBodyParts': ['Back'],
+      }).describeForPrompt().join('\n');
+      expect(text, contains('30 minutes'));
+      expect(text, contains('at most 1 muscle group'));
+      expect(text, contains('core'));
+      expect(text, contains('15 reps'));
+      expect(text, contains('Back'));
+    });
+  });
 }

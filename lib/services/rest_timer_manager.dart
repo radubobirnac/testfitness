@@ -12,6 +12,7 @@ import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/utils/audio_player_util.dart';
 import 'package:testfitness/services/timer_debug_log_service.dart';
 import 'package:testfitness/services/foreground_timer_service.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 
 enum RestTimerStatus {
   idle,
@@ -718,6 +719,70 @@ class RestTimerManager with WidgetsBindingObserver {
     await prefs.remove(_notificationsEnabledKey);
   }
 
+  /// Android channel used when the "Timer Sound" setting is on.
+  static const String soundChannelId = 'timer_channel_id';
+
+  /// Android channel used when "Timer Sound" is off. A channel's sound is
+  /// fixed once created, so silence needs its own channel id.
+  static const String silentChannelId = 'timer_silent_channel_id';
+
+  /// Whether the user wants a sound at rest end ("Timer Sound" switch).
+  /// Read at schedule/show time.
+  bool _timerSoundEnabled() =>
+      UserPreferencesService().getPlaySoundOnTimerEnd();
+
+  /// Notification details for the rest-complete alert. With [playSound]
+  /// false the alert is silent (separate Android channel, no iOS sound) but
+  /// still vibrates and shows heads-up.
+  @visibleForTesting
+  static NotificationDetails completionNotificationDetails(
+      {required bool playSound}) {
+    final AndroidNotificationDetails androidDetails = playSound
+        ? const AndroidNotificationDetails(
+            soundChannelId,
+            'Timer Notifications',
+            channelDescription: 'Channel for timer completion sounds',
+            importance: Importance.max,
+            priority: Priority.max,
+            category: AndroidNotificationCategory.alarm,
+            fullScreenIntent: true,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound('shipbell'),
+            ticker: 'Timer Complete!',
+            enableVibration: true,
+          )
+        : const AndroidNotificationDetails(
+            silentChannelId,
+            'Timer Notifications (silent)',
+            channelDescription:
+                'Timer completion alerts when Timer Sound is off',
+            importance: Importance.high,
+            priority: Priority.max,
+            category: AndroidNotificationCategory.alarm,
+            fullScreenIntent: true,
+            playSound: false,
+            ticker: 'Timer Complete!',
+            enableVibration: true,
+          );
+
+    final DarwinNotificationDetails iOSDetails = playSound
+        ? const DarwinNotificationDetails(
+            presentSound: true,
+            sound: 'shipbell.wav',
+            presentAlert: true,
+            presentBadge: false,
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          )
+        : const DarwinNotificationDetails(
+            presentSound: false,
+            presentAlert: true,
+            presentBadge: false,
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          );
+
+    return NotificationDetails(android: androidDetails, iOS: iOSDetails);
+  }
+
   Future<bool> _scheduleCompletionNotification() async {
     _notificationScheduled = false;
     if (!_notificationsEnabled) {
@@ -767,33 +832,10 @@ class RestTimerManager with WidgetsBindingObserver {
     final scheduledTime =
         tz.TZDateTime.fromMillisecondsSinceEpoch(tz.local, _endEpochMs!);
 
-    final AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-      'timer_channel_id',
-      'Timer Notifications',
-      channelDescription: 'Channel for timer completion sounds',
-      importance: Importance.max,
-      priority: Priority.max,
-      category: AndroidNotificationCategory.alarm,
-      fullScreenIntent: true,
-      playSound: true,
-      sound: RawResourceAndroidNotificationSound('shipbell'),
-      ticker: 'Timer Complete!',
-      enableVibration: true,
-    );
-
-    const DarwinNotificationDetails iOSDetails = DarwinNotificationDetails(
-      presentSound: true,
-      sound: 'shipbell.wav',
-      presentAlert: true,
-      presentBadge: false,
-      interruptionLevel: InterruptionLevel.timeSensitive,
-    );
-
-    final NotificationDetails notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iOSDetails,
-    );
+    final playSound = _timerSoundEnabled();
+    _logDebug('schedule playSound=$playSound');
+    final NotificationDetails notificationDetails =
+        completionNotificationDetails(playSound: playSound);
 
     Future<bool> scheduleWithMode(AndroidScheduleMode mode) async {
       try {
@@ -884,34 +926,8 @@ class RestTimerManager with WidgetsBindingObserver {
     final notifications = _notificationsPlugin;
     if (notifications == null) return;
 
-    final AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-      'timer_channel_id',
-      'Timer Notifications',
-      channelDescription: 'Channel for timer completion sounds',
-      importance: Importance.max,
-      priority: Priority.max,
-      category: AndroidNotificationCategory.alarm,
-      fullScreenIntent: true,
-      playSound: true,
-      sound: RawResourceAndroidNotificationSound('shipbell'),
-      ticker: 'Timer Complete!',
-      enableVibration: true,
-    );
-
-    const DarwinNotificationDetails iOSDetails =
-        DarwinNotificationDetails(
-      presentSound: true,
-      sound: 'shipbell.wav',
-      presentAlert: true,
-      presentBadge: false,
-      interruptionLevel: InterruptionLevel.timeSensitive,
-    );
-
-    final NotificationDetails notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iOSDetails,
-    );
+    final NotificationDetails notificationDetails =
+        completionNotificationDetails(playSound: _timerSoundEnabled());
 
     await notifications.show(
       _notificationId,

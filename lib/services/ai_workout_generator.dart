@@ -3,6 +3,8 @@ import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/models/workout_set.dart';
 import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/services/ai_service.dart';
+import 'package:testfitness/services/progression_coach.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'dart:math';
 
@@ -21,21 +23,25 @@ class AIWorkoutGenerator {
     required List<Workout> recentWorkouts,
     int lookbackDays = 14,
     bool? preferSingleMuscleGroup,
+    WorkoutPreferences? preferences,
   }) async {
     try {
       AppLogger.info('Generating AI workout: $workoutName');
+      final prefs = preferences ?? _savedPreferences();
 
       // Step 1: Get AI workout suggestion
       final aiSuggestion = await _aiService.suggestNextWorkout(
         recentWorkouts: recentWorkouts,
         lookbackDays: lookbackDays,
         preferSingleMuscleGroup: preferSingleMuscleGroup,
+        preferences: prefs,
       );
 
       return _buildWorkoutFromSuggestion(
         workoutName: workoutName,
         aiSuggestion: aiSuggestion,
         recentWorkouts: recentWorkouts,
+        preferences: prefs,
       );
     } catch (error, stackTrace) {
       AppLogger.error('Failed to generate AI workout', error, stackTrace);
@@ -50,9 +56,11 @@ class AIWorkoutGenerator {
     required List<Workout> recentWorkouts,
     int lookbackDays = 21,
     int maxRecentWorkouts = 6,
+    WorkoutPreferences? preferences,
   }) async {
     try {
       AppLogger.info('Generating focused AI workout: $workoutName');
+      final prefs = preferences ?? _savedPreferences();
 
       final context = await _buildAiWorkoutContext(
         recentWorkouts,
@@ -63,6 +71,7 @@ class AIWorkoutGenerator {
       final aiSuggestion = await _aiService.generateAiWorkout(
         focus: focus,
         context: context,
+        preferences: prefs,
       );
 
       return _buildWorkoutFromSuggestion(
@@ -70,6 +79,7 @@ class AIWorkoutGenerator {
         aiSuggestion: aiSuggestion,
         recentWorkouts: recentWorkouts,
         focus: focus,
+        preferences: prefs,
       );
     } catch (error, stackTrace) {
       AppLogger.error('Failed to generate focused AI workout', error, stackTrace);
@@ -77,18 +87,32 @@ class AIWorkoutGenerator {
     }
   }
 
+  /// The user's "Workout Suggestions" settings from the Profile screen.
+  WorkoutPreferences _savedPreferences() => WorkoutPreferences.fromMap(
+      UserPreferencesService().getWorkoutPreferences());
+
   Future<Workout> _buildWorkoutFromSuggestion({
     required String workoutName,
     required String aiSuggestion,
     required List<Workout> recentWorkouts,
     String? focus,
+    WorkoutPreferences? preferences,
   }) async {
     // Step 2: Parse AI suggestion to extract exercise recommendations
     final exerciseRecommendations =
         _parseAISuggestion(aiSuggestion, focus: focus);
 
     // Step 3: Get available exercises from database
-    final allExercises = await _exerciseRepository.getExercises();
+    var allExercises = await _exerciseRepository.getExercises();
+    // Honour "exclude core" unless the user explicitly asked for a core build.
+    final coreRequested = focus?.toLowerCase().contains('core') ?? false;
+    if (preferences?.excludeCore == true && !coreRequested) {
+      final withoutCore = allExercises
+          .where((e) =>
+              !ProgressionCoach.muscleGroupsOf(e).contains('Core'))
+          .toList();
+      if (withoutCore.isNotEmpty) allExercises = withoutCore;
+    }
     final focusPool = _filterExercisesForFocus(allExercises, focus);
     final primaryPool = focusPool.isNotEmpty ? focusPool : allExercises;
 

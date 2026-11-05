@@ -11,6 +11,7 @@ import 'package:testfitness/services/api_key_service.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/services/user_profile_service.dart';
 import 'package:testfitness/services/enhanced_tts_service.dart';
+import 'package:testfitness/services/rest_preferences_service.dart';
 import 'package:testfitness/services/timer_debug_reporter.dart';
 import 'package:testfitness/services/timer_debug_log_service.dart';
 import 'package:testfitness/models/user_profile.dart';
@@ -38,29 +39,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool get _isAndroid =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   // Preference keys for AppBloc integration
-  static const String _timerDurationKey = 'rest_timer_duration';
-  static const String _useMetricUnitsKey = 'use_metric_units';
-  static const String _playSoundOnTimerEndKey = 'play_sound_on_timer_end';
+  static const String _timerDurationKey =
+      UserPreferencesService.restTimerDurationKey;
+  static const String _useMetricUnitsKey =
+      UserPreferencesService.useMetricUnitsKey;
+  static const String _playSoundOnTimerEndKey =
+      UserPreferencesService.playSoundOnTimerEndKey;
 
   final UserProfileService _profileService = UserProfileService();
+  final UserPreferencesService _prefsService = UserPreferencesService();
   final EnhancedTTSService _ttsService = EnhancedTTSService();
   final TimerDebugReporter _timerDebugReporter = TimerDebugReporter();
   final TimerDebugLogService _timerDebugLogService = TimerDebugLogService();
   UserProfile? _userProfile;
 
+  /// True once the TTS engine is ready; voice controls are disabled before.
+  bool _ttsReady = false;
+  bool _smartRest = UserPreferencesService.defaultSmartRestEnabled;
+  Map<String, dynamic> _workoutPrefs =
+      Map<String, dynamic>.from(UserPreferencesService.defaultWorkoutPreferences);
+
   @override
   void initState() {
     super.initState();
-    _initializePreferences();
+    // Re-read stored settings into AppBloc. Read-only: never writes defaults.
+    context.read<AppBloc>().add(const AppPreferencesReloaded());
+    _loadLocalPreferences();
     _loadUserProfile();
     _initializeTTS();
   }
 
-  void _initializeTTS() async {
-    await _ttsService.initialize();
+  Future<void> _initializeTTS() async {
+    try {
+      await _ttsService.initialize();
+      if (mounted) setState(() => _ttsReady = true);
+    } catch (e) {
+      AppLogger.error('ProfileScreen: TTS initialization failed', e);
+    }
   }
 
-  void _loadUserProfile() async {
+  Future<void> _loadUserProfile() async {
     final profile = await _profileService.loadProfile();
     if (mounted) {
       setState(() {
@@ -69,32 +87,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  void _initializePreferences() {
-    AppLogger.info('ProfileScreen: Initializing preferences');
-
-    // Load preferences into AppBloc if not already loaded
-    final appState = context.read<AppBloc>().state;
-    if (!appState.preferences.containsKey(_timerDurationKey)) {
-      _loadDefaultPreferences();
-    }
-  }
-
-  void _loadDefaultPreferences() {
-    AppLogger.info('ProfileScreen: Loading default preferences');
-
-    final defaultPreferences = {
-      _timerDurationKey: UserPreferencesService.defaultRestTimerDuration,
-      _useMetricUnitsKey: UserPreferencesService.defaultUseMetricUnits,
-      _playSoundOnTimerEndKey:
-          UserPreferencesService.defaultPlaySoundOnTimerEnd,
-    };
-
-    context.read<AppBloc>().add(AppPreferencesUpdated(defaultPreferences));
+  Future<void> _loadLocalPreferences() async {
+    await _prefsService.initialize();
+    if (!mounted) return;
+    setState(() {
+      _smartRest = _prefsService.getSmartRestEnabled();
+      _workoutPrefs = _prefsService.getWorkoutPreferences();
+    });
   }
 
   void _updatePreference(String key, dynamic value) {
     AppLogger.debug('ProfileScreen: Updating preference $key = $value');
     context.read<AppBloc>().add(AppPreferencesUpdated({key: value}));
+  }
+
+  Future<void> _setSmartRest(bool enabled) async {
+    setState(() => _smartRest = enabled);
+    await _prefsService.setSmartRestEnabled(enabled);
   }
 
   void _showProfileEditor() {
@@ -318,13 +327,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
       builder: (context, state) {
         // Get preferences from AppBloc state
+        // Fall back to the stored values (not hard-coded defaults).
         final timerDuration = state.preferences[_timerDurationKey] as int? ??
-            UserPreferencesService.defaultRestTimerDuration;
+            _prefsService.getRestTimerDuration();
         final useMetricUnits = state.preferences[_useMetricUnitsKey] as bool? ??
-            UserPreferencesService.defaultUseMetricUnits;
+            _prefsService.getUseMetricUnits();
         final playSoundOnTimerEnd =
             state.preferences[_playSoundOnTimerEndKey] as bool? ??
-                UserPreferencesService.defaultPlaySoundOnTimerEnd;
+                _prefsService.getPlaySoundOnTimerEnd();
 
         return Scaffold(
           appBar: AppBar(title: const Text('Profile & Settings')),
@@ -397,7 +407,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
 
                     // Rest Timer Setting
-                    _buildTimerSettingCard(context, timerDuration),
+                    _buildRestSettingCard(context, timerDuration),
 
                     // Weight Unit Setting
                     _buildWeightUnitCard(context, useMetricUnits),
@@ -408,11 +418,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     // Sound Setting
                     _buildSoundSettingCard(context, playSoundOnTimerEnd),
 
-                    // AI Workout Preferences section
+                    // Workout suggestions section
                     const Padding(
                       padding: EdgeInsets.all(16.0),
                       child: Text(
-                        'AI Workout Preferences',
+                        'Workout Suggestions',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -420,7 +430,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
 
-                    _buildAIWorkoutPreferencesCard(context),
+                    _buildWorkoutSuggestionsCard(context),
 
                     // App Settings section
                     const Padding(
@@ -504,66 +514,81 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildTimerSettingCard(BuildContext context, int timerDuration) {
+  Widget _buildRestSettingCard(BuildContext context, int timerDuration) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final fmt = RestPreferencesService.format;
+    final sliderValue = timerDuration.clamp(15, 300).toDouble();
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(vertical: 8.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Rest Timer Duration'),
-                Text(
-                  _formatTime(timerDuration),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ],
+            SwitchListTile(
+              key: const ValueKey('smart-rest-switch'),
+              secondary: const Icon(Icons.timer_outlined),
+              title: const Text('Smart rest by exercise type'),
+              subtitle: Text(
+                'Heavy barbell ${fmt(RestPreferencesService.heavyCompoundSeconds)}'
+                ' · compounds ${fmt(RestPreferencesService.compoundSeconds)}'
+                ' · machine/cable ${fmt(RestPreferencesService.machineSeconds)}'
+                ' · isolation ${fmt(RestPreferencesService.isolationSeconds)}',
+              ),
+              value: _smartRest,
+              onChanged: _setSmartRest,
             ),
-            const SizedBox(height: 16),
-            Slider(
-              min: 15,
-              max: 300,
-              divisions: 57,
-              value: timerDuration.toDouble(),
-              onChanged: (value) {
-                _updatePreference(_timerDurationKey, value.round());
-              },
-            ),
-            Center(
-              child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 16),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade100,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.green.shade800, width: 2.0),
-                ),
-                child: Text(
-                  _formatTime(timerDuration),
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green.shade800,
-                  ),
+            if (!_smartRest)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(child: Text('Rest for every exercise')),
+                        Text(
+                          fmt(timerDuration),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      key: const ValueKey('global-rest-slider'),
+                      min: 15,
+                      max: 300,
+                      divisions: 57,
+                      value: sliderValue,
+                      label: fmt(sliderValue.round()),
+                      onChanged: (value) {
+                        _updatePreference(_timerDurationKey, value.round());
+                      },
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 48)),
+                        onPressed: () {
+                          _updatePreference(_timerDurationKey,
+                              UserPreferencesService.defaultRestTimerDuration);
+                        },
+                        child: Text('Reset to '
+                            '${fmt(UserPreferencesService.defaultRestTimerDuration)}'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-            Text(
-              'Adjust how long to rest between sets.',
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 16),
-            Center(
-              child: ElevatedButton(
-                onPressed: () {
-                  _updatePreference(_timerDurationKey,
-                      UserPreferencesService.defaultRestTimerDuration);
-                },
-                child: const Text('Reset to Default (1:30)'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Text(
+                'You can still set rest per exercise from the Rest chip in a '
+                'workout.',
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
             ),
           ],
@@ -598,16 +623,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                 decoration: BoxDecoration(
-                  color: Colors.blue.shade100,
+                  color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.blue.shade800, width: 2.0),
+                  border: Border.all(
+                      color: Theme.of(context).colorScheme.primary, width: 2.0),
                 ),
                 child: Text(
                   useMetricUnits ? 'Kilograms (Kg)' : 'Pounds (Lbs)',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade800,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
                   ),
                 ),
               ),
@@ -615,6 +641,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Text(
               'Toggle between imperial (Lbs) and metric (Kg) weight units.',
               style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Changes labels and steps only — weights you already logged '
+              'keep their numbers.',
+              key: const ValueKey('weight-unit-note'),
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 16),
             Center(
@@ -747,9 +783,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildThemeSettingCard(BuildContext context, bool storedDarkMode) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: userThemeOverride,
+      builder: (context, overridden, _) =>
+          _buildThemeSettingCardBody(context, storedDarkMode, !overridden),
+    );
+  }
+
+  Widget _buildThemeSettingCardBody(
+      BuildContext context, bool storedDarkMode, bool followsSystem) {
     // Show the theme actually in use, which may come from the system setting.
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final followsSystem = !userThemeOverride.value;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
       child: Padding(
@@ -790,6 +834,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton(
+                  key: const ValueKey('use-device-theme'),
+                  style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
                   onPressed: _followSystemTheme,
                   child: const Text('Use device setting'),
                 ),
@@ -978,41 +1024,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Enthusiasm Level Slider
-              Text(
-                'Enthusiasm Level: ${_ttsService.enthusiasmLevel}/5',
-                style: const TextStyle(fontWeight: FontWeight.w500),
-              ),
-              Slider(
-                min: 1,
-                max: 5,
-                divisions: 4,
-                value: _ttsService.enthusiasmLevel.toDouble(),
-                onChanged: (value) async {
-                  await _ttsService.setEnthusiasmLevel(value.round());
-                  setState(() {});
-                },
-              ),
-              Text(
-                _getEnthusiasmDescription(_ttsService.enthusiasmLevel),
-                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-
-              const SizedBox(height: 16),
-
               // Voice Speed Slider
               Text(
                 'Speech Rate: ${(_ttsService.speechRate * 100).round()}%',
                 style: const TextStyle(fontWeight: FontWeight.w500),
               ),
               Slider(
+                key: const ValueKey('tts-rate-slider'),
                 min: 0.3,
                 max: 1.5,
-                value: _ttsService.speechRate,
-                onChanged: (value) async {
-                  await _ttsService.setSpeechRate(value);
-                  setState(() {});
-                },
+                value: _ttsService.speechRate.clamp(0.3, 1.5).toDouble(),
+                onChanged: _ttsReady
+                    ? (value) => _applyTtsSetting(
+                        () => _ttsService.setSpeechRate(value))
+                    : null,
               ),
 
               const SizedBox(height: 16),
@@ -1023,13 +1048,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w500),
               ),
               Slider(
+                key: const ValueKey('tts-pitch-slider'),
                 min: 0.5,
                 max: 2.0,
-                value: _ttsService.pitch,
-                onChanged: (value) async {
-                  await _ttsService.setPitch(value);
-                  setState(() {});
-                },
+                value: _ttsService.pitch.clamp(0.5, 2.0).toDouble(),
+                onChanged: _ttsReady
+                    ? (value) =>
+                        _applyTtsSetting(() => _ttsService.setPitch(value))
+                    : null,
               ),
 
               const SizedBox(height: 16),
@@ -1041,27 +1067,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const Text('Motivational Phrases'),
                   Switch(
                     value: _ttsService.useMotivationalPhrases,
-                    onChanged: (value) async {
-                      await _ttsService.setUseMotivationalPhrases(value);
-                      setState(() {});
-                    },
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 8),
-
-              // Emphasis Toggle
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Voice Emphasis'),
-                  Switch(
-                    value: _ttsService.useEmphasis,
-                    onChanged: (value) async {
-                      await _ttsService.setUseEmphasis(value);
-                      setState(() {});
-                    },
+                    onChanged: _ttsReady
+                        ? (value) => _applyTtsSetting(
+                            () => _ttsService.setUseMotivationalPhrases(value))
+                        : null,
                   ),
                 ],
               ),
@@ -1101,18 +1110,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               Row(
                 children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => _ttsService.testWorkoutVoice(),
-                      icon: const Icon(Icons.fitness_center),
-                      label: const Text('Workout'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: () async {
@@ -1222,21 +1219,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  String _getEnthusiasmDescription(int level) {
-    switch (level) {
-      case 1:
-        return 'Calm and minimal - for quiet environments';
-      case 2:
-        return 'Low energy - gentle encouragement';
-      case 3:
-        return 'Moderate - balanced motivation';
-      case 4:
-        return 'High energy - strong encouragement';
-      case 5:
-        return 'Maximum - intense motivation for heavy workouts';
-      default:
-        return '';
+  /// Apply a TTS setting change; errors are logged, never thrown into the UI.
+  Future<void> _applyTtsSetting(Future<void> Function() change) async {
+    try {
+      await change();
+    } catch (e) {
+      AppLogger.error('ProfileScreen: TTS setting failed', e);
     }
+    if (mounted) setState(() {});
   }
 
   void _showVoiceSelectionDialog() {
@@ -1471,164 +1461,139 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (mounted) setState(() {});
   }
 
-  String _formatTime(int seconds) {
-    final minutes = seconds ~/ 60;
-    final remainingSeconds = seconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-  }
-
-  Widget _buildAIWorkoutPreferencesCard(BuildContext context) {
-    final preferences = _userProfile?.preferences ?? {};
+  Widget _buildWorkoutSuggestionsCard(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final prefs = _workoutPrefs;
+    final bodyParts = (prefs['defaultBodyParts'] as int).clamp(1, 3);
+    final duration = (prefs['defaultDurationMinutes'] as int).clamp(15, 90);
+    final focus = prefs['workoutFocus'] as String;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [
-              Colors.teal.withValues(alpha: 0.1),
-              Colors.green.withValues(alpha: 0.1),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.smart_toy,
-                    size: 32,
-                    color: Colors.teal,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.tune, size: 28, color: colorScheme.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Used by your coach (and AI, if a key is set) when '
+                    'suggesting workouts',
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'AI Workout Guidance',
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Configure how AI suggests workouts for you',
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Default Body Parts
-              Text(
-                'Default Body Parts: ${preferences['defaultBodyParts'] ?? 2}',
-                style: const TextStyle(fontWeight: FontWeight.w500),
-              ),
-              Slider(
-                min: 1,
-                max: 4,
-                divisions: 3,
-                value: (preferences['defaultBodyParts'] ?? 2).toDouble(),
-                onChanged: (value) =>
-                    _updateAIPreference('defaultBodyParts', value.round()),
-              ),
-              Text(
-                _getBodyPartsDescription(
-                    (preferences['defaultBodyParts'] ?? 2)),
-                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Default Workout Duration
-              Text(
-                'Default Duration: ${preferences['defaultDurationMinutes'] ?? 45} minutes',
-                style: const TextStyle(fontWeight: FontWeight.w500),
-              ),
-              Slider(
-                min: 15,
-                max: 90,
-                divisions: 15,
-                value: (preferences['defaultDurationMinutes'] ?? 45).toDouble(),
-                onChanged: (value) => _updateAIPreference(
-                    'defaultDurationMinutes', value.round()),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Excluded Body Parts
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Exclude Core Exercises'),
-                  Switch(
-                    value: preferences['excludeCore'] ?? false,
-                    onChanged: (value) =>
-                        _updateAIPreference('excludeCore', value),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 8),
-
-              // Workout Focus
-              Text(
-                'Workout Focus',
-                style: const TextStyle(fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: preferences['workoutFocus'] ?? 'balanced',
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
-                items: const [
-                  DropdownMenuItem(
-                      value: 'strength', child: Text('Strength Focus')),
-                  DropdownMenuItem(
-                      value: 'endurance', child: Text('Endurance Focus')),
-                  DropdownMenuItem(value: 'balanced', child: Text('Balanced')),
-                  DropdownMenuItem(
-                      value: 'upper', child: Text('Upper Body Priority')),
-                  DropdownMenuItem(
-                      value: 'lower', child: Text('Lower Body Priority')),
-                ],
-                onChanged: (value) =>
-                    _updateAIPreference('workoutFocus', value),
-              ),
+              ],
+            ),
+            const SizedBox(height: 16),
 
-              const SizedBox(height: 16),
+            // Default Body Parts
+            Text(
+              'Default Body Parts: $bodyParts',
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+            Slider(
+              key: const ValueKey('workout-body-parts-slider'),
+              min: 1,
+              max: 3,
+              divisions: 2,
+              value: bodyParts.toDouble(),
+              label: '$bodyParts',
+              onChanged: (value) =>
+                  _updateWorkoutPreference('defaultBodyParts', value.round()),
+            ),
+            Text(
+              _getBodyPartsDescription(bodyParts),
+              style:
+                  TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+            ),
 
-              // Preferred Body Parts
-              Text(
-                'Preferred Body Parts',
-                style: const TextStyle(fontWeight: FontWeight.w500),
+            const SizedBox(height: 16),
+
+            // Default Workout Duration
+            Text(
+              'Default Duration: $duration minutes',
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+            Slider(
+              key: const ValueKey('workout-duration-slider'),
+              min: 15,
+              max: 90,
+              divisions: 15,
+              value: duration.toDouble(),
+              label: '$duration min',
+              onChanged: (value) => _updateWorkoutPreference(
+                  'defaultDurationMinutes', value.round()),
+            ),
+
+            const SizedBox(height: 8),
+
+            SwitchListTile(
+              key: const ValueKey('workout-exclude-core'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Exclude Core Exercises'),
+              value: prefs['excludeCore'] as bool,
+              onChanged: (value) =>
+                  _updateWorkoutPreference('excludeCore', value),
+            ),
+
+            const SizedBox(height: 8),
+
+            // Workout Focus
+            const Text(
+              'Workout Focus',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              // Keyed on the value so a value loaded after the first build
+              // is shown (initialValue is only read once).
+              key: ValueKey('workout-focus-$focus'),
+              initialValue: focus,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Select body parts you want to prioritize in AI workouts',
-                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 8),
-              _buildBodyPartSelection(preferences),
-            ],
-          ),
+              items: const [
+                DropdownMenuItem(
+                    value: 'strength', child: Text('Strength Focus')),
+                DropdownMenuItem(
+                    value: 'endurance', child: Text('Endurance Focus')),
+                DropdownMenuItem(value: 'balanced', child: Text('Balanced')),
+                DropdownMenuItem(
+                    value: 'upper', child: Text('Upper Body Priority')),
+                DropdownMenuItem(
+                    value: 'lower', child: Text('Lower Body Priority')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  _updateWorkoutPreference('workoutFocus', value);
+                }
+              },
+            ),
+
+            const SizedBox(height: 16),
+
+            // Preferred Body Parts
+            const Text(
+              'Preferred Body Parts',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Select body parts you want to prioritize in suggested workouts',
+              style:
+                  TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            _buildBodyPartSelection(
+                List<String>.from(prefs['preferredBodyParts'] as List)),
+          ],
         ),
       ),
     );
@@ -1638,35 +1603,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     switch (count) {
       case 1:
         return 'Single body part workouts (focused)';
-      case 2:
-        return 'Two body parts (balanced)';
       case 3:
         return 'Three body parts (comprehensive)';
-      case 4:
-        return 'Full body workouts (complete)';
+      case 2:
       default:
         return 'Two body parts (balanced)';
     }
   }
 
-  Widget _buildBodyPartSelection(Map<String, dynamic> preferences) {
-    final availableBodyParts = [
-      'Chest',
-      'Back',
-      'Shoulders',
-      'Arms',
-      'Legs',
-      'Core',
-      'Cardio'
-    ];
-
-    final preferredBodyParts =
-        List<String>.from(preferences['preferredBodyParts'] ?? []);
-
+  Widget _buildBodyPartSelection(List<String> preferredBodyParts) {
     return Wrap(
       spacing: 8.0,
       runSpacing: 4.0,
-      children: availableBodyParts.map((bodyPart) {
+      children: UserPreferencesService.workoutBodyParts.map((bodyPart) {
         final isSelected = preferredBodyParts.contains(bodyPart);
         return FilterChip(
           label: Text(bodyPart),
@@ -1678,44 +1627,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             } else {
               updatedList.remove(bodyPart);
             }
-            _updateAIPreference('preferredBodyParts', updatedList);
+            _updateWorkoutPreference('preferredBodyParts', updatedList);
           },
-          selectedColor: Colors.teal.withValues(alpha: 0.3),
-          checkmarkColor: Colors.teal,
         );
       }).toList(),
     );
   }
 
-  void _updateAIPreference(String key, dynamic value) async {
-    if (_userProfile == null) return;
-
-    // Update state immediately for responsive UI
-    final updatedPreferences =
-        Map<String, dynamic>.from(_userProfile!.preferences);
-    updatedPreferences[key] = value;
-
-    final updatedProfile = _userProfile!.copyWith(
-      preferences: updatedPreferences,
-      lastUpdated: DateTime.now(),
-    );
-
+  /// Update one workout-suggestion preference: the UI first, then storage.
+  /// Works without a user profile.
+  Future<void> _updateWorkoutPreference(String key, dynamic value) async {
     setState(() {
-      _userProfile = updatedProfile;
+      _workoutPrefs = {..._workoutPrefs, key: value};
     });
-
-    // Save to database asynchronously
     try {
-      final success = await UserProfileService().saveProfile(updatedProfile);
-      if (success) {
-        AppLogger.info('AI preference updated: $key = $value');
-      } else {
-        AppLogger.error('Failed to save AI preference: $key = $value');
-        // Could revert state here if needed
-      }
+      await _prefsService.setWorkoutPreference(key, value);
     } catch (error) {
-      AppLogger.error('Error saving AI preference: $key = $value', error);
-      // Could revert state here if needed
+      AppLogger.error('Error saving workout preference: $key = $value', error);
     }
   }
 }

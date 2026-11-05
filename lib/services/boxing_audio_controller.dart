@@ -13,6 +13,13 @@ class BoxingAudioController {
   EnhancedTTSService? _tts;
   bool _isInitialized = false;
 
+  /// Boxing call-out voice: slower and louder for clarity. Applied as a
+  /// session-only override so the user's saved voice settings are never
+  /// overwritten; [stopAll]/[dispose] restore them.
+  static const double boxingSpeechRate = 0.6;
+  static const double boxingPitch = 1.0;
+  static const double boxingVolume = 1.0;
+
   /// Initialize the boxing audio controller with native TTS
   Future<void> initialize() async {
     if (_isInitialized) return;
@@ -20,13 +27,8 @@ class BoxingAudioController {
     try {
       AppLogger.info('Initializing simple boxing audio controller...');
 
-      // Initialize TTS service
       _tts = EnhancedTTSService();
       await _tts!.initialize();
-      await _tts!.setSpeechRate(0.6); // Slower for clarity
-      await _tts!.setPitch(1.0); // Normal pitch
-      await _tts!.setVolume(1.0); // Maximum volume
-      await _tts!.setEnthusiasmLevel(1); // Minimal enthusiasm
 
       _isInitialized = true;
       AppLogger.info('Simple boxing audio ready!');
@@ -36,12 +38,24 @@ class BoxingAudioController {
     }
   }
 
+  /// Applies the boxing voice to the engine (not persisted) if not active.
+  Future<void> _ensureBoxingVoice() async {
+    final tts = _tts;
+    if (tts == null || tts.isSessionOverrideActive) return;
+    await tts.applySessionOverride(
+      speechRate: boxingSpeechRate,
+      pitch: boxingPitch,
+      volume: boxingVolume,
+    );
+  }
+
   /// Play simple countdown: 3, 2, 1
   Future<void> playCountdown() async {
     if (!_isInitialized) await initialize();
 
     try {
       AppLogger.info('Starting simple countdown...');
+      await _ensureBoxingVoice();
 
       await _tts!.speak("3");
       await Future.delayed(const Duration(seconds: 1));
@@ -61,6 +75,7 @@ class BoxingAudioController {
 
     try {
       final spokenCombination = _convertToSpokenCombination(combination);
+      await _ensureBoxingVoice();
       await _tts!.speak(spokenCombination);
       AppLogger.info('🥊 Called combination: $combination');
     } catch (e) {
@@ -93,10 +108,11 @@ class BoxingAudioController {
         'Round $roundNumber ready (no announcement per user preference)');
   }
 
-  /// Stop all audio
+  /// Stop all audio and restore the user's own voice settings
   Future<void> stopAll() async {
     try {
       await _tts?.stop();
+      await _tts?.clearSessionOverride();
       AppLogger.info('Stopped all boxing audio');
     } catch (e) {
       AppLogger.error('Failed to stop boxing audio', e);
@@ -106,6 +122,7 @@ class BoxingAudioController {
   /// Dispose resources
   Future<void> dispose() async {
     try {
+      await _tts?.clearSessionOverride();
       _isInitialized = false;
       AppLogger.info('BoxingAudioController disposed');
     } catch (e) {

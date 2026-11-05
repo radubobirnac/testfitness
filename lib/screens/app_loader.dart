@@ -11,6 +11,7 @@ import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/repositories/workout_repository.dart';
 import 'package:testfitness/screens/app_with_error_screen.dart';
 import 'package:testfitness/screens/main_screen.dart';
+import 'package:testfitness/screens/onboarding_screen.dart';
 import 'package:testfitness/screens/splash_screen.dart';
 // import 'package:testfitness/screens/haptic_test_screen.dart'; // Removed - debug screen not needed
 import 'package:testfitness/utils/app_logger.dart';
@@ -29,6 +30,11 @@ const String darkModePreferenceKey = 'dark_mode';
 /// follows the system theme (false). Loaded during start-up and updated by the
 /// Dark Mode setting on the profile screen.
 final ValueNotifier<bool> userThemeOverride = ValueNotifier<bool>(false);
+
+/// Whether the root route shows first-run setup instead of [MainScreen].
+/// Decided during start-up and cleared once setup finishes or is skipped, so
+/// later navigations to '/' always reach the main app.
+bool showOnboardingOnLaunch = false;
 
 // Global instance for notifications plugin
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -99,6 +105,14 @@ class _AppLoaderState extends State<AppLoader> {
       AppLogger.info("Phase 5: Preloading repository data...");
       await _preloadRepositories();
       AppLogger.info("Repository data preloaded successfully");
+
+      // First-run setup: only for new users with no workouts. Existing users
+      // updating the app are marked done silently. Never blocks start-up.
+      showOnboardingOnLaunch = isDatabaseInitialized &&
+          await shouldShowOnboarding(
+            countWorkouts: () async =>
+                (await WorkoutRepository().getWorkouts()).length,
+          );
 
       // All initialization complete
       _updateProgress(1.0, "Ready to go!");
@@ -370,6 +384,16 @@ class MyApp extends StatelessWidget {
               if (settings.name == '/') {
                 // Extract the initialIndex argument if it exists
                 final int? initialIndex = settings.arguments as int?;
+                if (showOnboardingOnLaunch) {
+                  return MaterialPageRoute(
+                    builder: (context) => OnboardingScreen(
+                      onFinished: (context, startWorkout) {
+                        showOnboardingOnLaunch = false;
+                        OnboardingScreen.defaultFinish(context, startWorkout);
+                      },
+                    ),
+                  );
+                }
                 return MaterialPageRoute(
                   builder: (context) =>
                       MainScreen(initialIndex: initialIndex ?? 0),

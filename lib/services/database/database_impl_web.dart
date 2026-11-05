@@ -89,8 +89,9 @@ class DatabaseImpl implements DatabaseInterface {
         }
       }
 
-      // Load workout sets (WorkoutSet.fromMap tolerates a missing isWarmup
-      // field in data saved before warm-ups existed: it reads as false)
+      // Load workout sets (WorkoutSet.fromMap tolerates missing isWarmup,
+      // rpe and supersetGroup fields in data saved before those existed:
+      // they read as false / null)
       final workoutSetsJson = window.localStorage[_workoutSetsKey];
       if (workoutSetsJson != null) {
         final Map<String, dynamic> workoutSetsMap = jsonDecode(workoutSetsJson);
