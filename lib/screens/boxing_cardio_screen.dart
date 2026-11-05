@@ -45,7 +45,6 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
   bool _isPaused = false;
   bool _isResting = false;
   int _currentRound = 0;
-  int _remainingTime = 0;
   String _currentCombination = '';
 
   // Animation controllers
@@ -201,7 +200,6 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
         _isSessionActive = true;
         _isPaused = false;
         _currentRound = 1;
-        _remainingTime = _roundDuration;
         _currentCombination = 'Get Ready!';
 
         // Reset heart rate data for new session (always reset, will track if connected)
@@ -277,9 +275,9 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
   }
 
   void _onRestStart(int restSeconds) {
+    if (restSeconds < 0) return;
     setState(() {
       _isResting = true;
-      _remainingTime = restSeconds;
       _currentCombination = 'Rest Time';
     });
   }

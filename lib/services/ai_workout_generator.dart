@@ -1,7 +1,6 @@
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/models/exercise.dart';
 import 'package:testfitness/models/workout_set.dart';
-import 'package:testfitness/repositories/workout_repository.dart';
 import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
@@ -13,7 +12,6 @@ class AIWorkoutGenerator {
   factory AIWorkoutGenerator() => _instance;
   AIWorkoutGenerator._internal();
 
-  final WorkoutRepository _workoutRepository = WorkoutRepository();
   final ExerciseRepository _exerciseRepository = ExerciseRepository();
   final AIService _aiService = AIService();
 

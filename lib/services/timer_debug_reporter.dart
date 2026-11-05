@@ -75,13 +75,24 @@ class TimerDebugReporter {
   }
 
   Future<void> _appendPermissionStatus(StringBuffer buffer) async {
-    buffer.writeln('Permissions:');
-    buffer.writeln('- Notifications: ${await _safeStatus(Permission.notification)}');
+    buffer.writeln("Permissions:");
     buffer.writeln(
-        '- Exact alarms: ${await _safeStatus(Permission.scheduleExactAlarm)}');
-    buffer.writeln(
-        '- Ignore battery optimizations: ${await _safeStatus(Permission.ignoreBatteryOptimizations)}');
-    buffer.writeln('');
+        "- Notifications: ${await _safeStatus(Permission.notification)}");
+
+    if (Platform.isAndroid) {
+      buffer.writeln(
+          "- Exact alarms: ${await _safeStatus(Permission.scheduleExactAlarm)}");
+      buffer.writeln(
+          "- Ignore battery optimizations: ${await _safeStatus(Permission.ignoreBatteryOptimizations)}");
+    } else if (Platform.isIOS) {
+      buffer.writeln("- Exact alarms: n/a (Android only)");
+      buffer.writeln("- Ignore battery optimizations: n/a (Android only)");
+    } else {
+      buffer.writeln("- Exact alarms: n/a");
+      buffer.writeln("- Ignore battery optimizations: n/a");
+    }
+
+    buffer.writeln("");
   }
 
   Future<void> _appendPowerStatus(StringBuffer buffer) async {
@@ -296,8 +307,8 @@ class TimerDebugReporter {
     Future<void> scheduleWithMode(AndroidScheduleMode mode) async {
       await flutterLocalNotificationsPlugin.zonedSchedule(
         1203,
-        'Heads-up Test',
-        'If you see this over other apps, heads-up is working.',
+        'Timer Notification Test',
+        'If you see this, timer notifications are working.',
         scheduledTime,
         notificationDetails,
         androidScheduleMode: mode,
@@ -306,12 +317,25 @@ class TimerDebugReporter {
       );
     }
 
-    try {
-      await scheduleWithMode(AndroidScheduleMode.exactAllowWhileIdle);
-    } catch (e) {
-      AppLogger.warning(
-          'TimerDebugReporter: exact schedule failed, retrying inexact', e);
-      await scheduleWithMode(AndroidScheduleMode.inexactAllowWhileIdle);
+    if (Platform.isAndroid) {
+      try {
+        await scheduleWithMode(AndroidScheduleMode.exactAllowWhileIdle);
+      } catch (e) {
+        AppLogger.warning(
+            'TimerDebugReporter: exact schedule failed, retrying inexact', e);
+        await scheduleWithMode(AndroidScheduleMode.inexactAllowWhileIdle);
+      }
+      return;
     }
+
+    await flutterLocalNotificationsPlugin.zonedSchedule(
+      1203,
+      'Timer Notification Test',
+      'If you see this, timer notifications are working.',
+      scheduledTime,
+      notificationDetails,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
   }
 }

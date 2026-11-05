@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:testfitness/utils/app_logger.dart';
@@ -126,63 +127,59 @@ class HeartRateService {
     try {
       AppLogger.info('Requesting Bluetooth permissions');
 
-      // Different permissions needed for different Android versions
-      List<Permission> permissionsToRequest = [];
+      final List<Permission> permissionsToRequest = [];
 
-      // Try to determine Android version by checking if new permissions exist
-      try {
-        // For Android 12+ (API 31+) - try the new permissions first
-        await Permission.bluetoothScan.status;
-        await Permission.bluetoothConnect.status;
-
-        // If these permissions exist (no exception), we're on Android 12+
-        permissionsToRequest.addAll([
-          Permission.bluetoothScan,
-          Permission.bluetoothConnect,
-        ]);
-
-        AppLogger.info('Using Android 12+ Bluetooth permissions');
-      } catch (e) {
-        // If new permissions don't exist, we're on older Android
-        permissionsToRequest.addAll([
-          Permission.bluetooth,
-          Permission.location, // Required for BLE scanning on older Android
-        ]);
-
-        AppLogger.info('Using legacy Bluetooth permissions');
+      if (Platform.isAndroid) {
+        try {
+          // Android 12+ runtime Bluetooth permissions.
+          await Permission.bluetoothScan.status;
+          await Permission.bluetoothConnect.status;
+          permissionsToRequest.addAll([
+            Permission.bluetoothScan,
+            Permission.bluetoothConnect,
+          ]);
+          AppLogger.info('Using Android 12+ Bluetooth permissions');
+        } catch (_) {
+          // Legacy Android BLE scan behavior.
+          permissionsToRequest.addAll([
+            Permission.bluetooth,
+            Permission.location,
+          ]);
+          AppLogger.info('Using legacy Android Bluetooth permissions');
+        }
+      } else if (Platform.isIOS) {
+        // iOS BLE flow only needs Bluetooth authorization.
+        permissionsToRequest.add(Permission.bluetooth);
+        AppLogger.info('Using iOS Bluetooth permissions');
+      } else {
+        AppLogger.info('No runtime Bluetooth permissions required on this platform');
+        return true;
       }
 
       AppLogger.info(
           'Requesting permissions: ${permissionsToRequest.map((p) => p.toString()).join(', ')}');
 
-      Map<Permission, PermissionStatus> permissions =
-          await permissionsToRequest.request();
+      final permissions = await permissionsToRequest.request();
 
-      // Check results
-      List<String> deniedPermissions = [];
-      for (var entry in permissions.entries) {
+      final deniedPermissions = <String>[];
+      final permanentlyDenied = <String>[];
+
+      for (final entry in permissions.entries) {
         AppLogger.info('Permission ${entry.key}: ${entry.value}');
         if (!entry.value.isGranted) {
           deniedPermissions.add(entry.key.toString());
         }
+        if (entry.value.isPermanentlyDenied) {
+          permanentlyDenied.add(entry.key.toString());
+        }
       }
 
-      bool allGranted = deniedPermissions.isEmpty;
+      final allGranted = deniedPermissions.isEmpty;
 
       if (allGranted) {
         AppLogger.info('All Bluetooth permissions granted');
       } else {
-        AppLogger.warning(
-            'Denied permissions: ${deniedPermissions.join(', ')}');
-
-        // Check if any permissions are permanently denied
-        List<String> permanentlyDenied = [];
-        for (var entry in permissions.entries) {
-          if (entry.value.isPermanentlyDenied) {
-            permanentlyDenied.add(entry.key.toString());
-          }
-        }
-
+        AppLogger.warning('Denied permissions: ${deniedPermissions.join(', ')}');
         if (permanentlyDenied.isNotEmpty) {
           AppLogger.warning(
               'Permanently denied permissions: ${permanentlyDenied.join(', ')}');

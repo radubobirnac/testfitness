@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -14,7 +15,6 @@ import 'package:testfitness/models/user_profile.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/screens/performance_screen.dart';
 import 'package:testfitness/screens/ai_chat_screen.dart';
-import 'package:testfitness/screens/app_loader.dart';
 import 'package:testfitness/screens/gemini_tts_test_screen.dart';
 import 'package:testfitness/screens/tts_analytics_screen.dart';
 
@@ -26,6 +26,8 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  bool get _isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   // Preference keys for AppBloc integration
   static const String _timerDurationKey = 'rest_timer_duration';
   static const String _useMetricUnitsKey = 'use_metric_units';
@@ -168,9 +170,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _requestIgnoreBatteryOptimizations() async {
+    if (!_isAndroid) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Battery optimization controls are Android-only.'),
+        ),
+      );
+      return;
+    }
+
     try {
-      final status =
-          await Permission.ignoreBatteryOptimizations.request();
+      final status = await Permission.ignoreBatteryOptimizations.request();
       if (!mounted) return;
       final message = status.isGranted
           ? 'Battery optimizations ignored for StrengthWave.'
@@ -264,18 +275,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await _timerDebugReporter.scheduleHeadsUpTest();
 
       if (!mounted) return;
+      final message = _isAndroid
+          ? 'Heads-up test scheduled in 10s. Switch apps/lock screen now.'
+          : 'Timer notification test scheduled in 10s. Lock screen now.';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Heads-up test scheduled in 10s. Switch apps/lock screen now.'),
-        ),
+        SnackBar(content: Text(message)),
       );
     } catch (e) {
-      AppLogger.error('Heads-up test scheduling failed', e);
+      AppLogger.error('Timer notification test scheduling failed', e);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to schedule heads-up test: $e'),
+          content: Text('Failed to schedule timer notification test: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -741,18 +752,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: ElevatedButton.icon(
                 onPressed: _testHeadsUpNotification,
                 icon: const Icon(Icons.notifications_active),
-                label: const Text('Test Heads-Up Notification'),
+                label: Text(_isAndroid ? 'Test Heads-Up Notification' : 'Test Timer Notification'),
               ),
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _requestIgnoreBatteryOptimizations,
-                icon: const Icon(Icons.battery_alert_outlined),
-                label: const Text('Disable Battery Optimizations'),
+            if (_isAndroid) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _requestIgnoreBatteryOptimizations,
+                  icon: const Icon(Icons.battery_alert_outlined),
+                  label: const Text('Disable Battery Optimizations'),
+                ),
               ),
-            ),
+            ] else ...[
+              const SizedBox(height: 12),
+              Text(
+                'Battery optimization controls are Android-only.',
+                style: TextStyle(color: Colors.grey[600]),
+              ),
+            ],
             const SizedBox(height: 24),
             const Text(
               'Timer Debug Log',

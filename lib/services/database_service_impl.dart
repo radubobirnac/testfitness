@@ -1,4 +1,5 @@
 import 'package:testfitness/models/exercise.dart';
+import 'package:testfitness/models/fitness_metric.dart';
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/services/database_interface.dart';
 import 'package:testfitness/services/database_service.dart';
@@ -68,5 +69,54 @@ class DatabaseServiceImpl implements DatabaseInterface {
   @override
   Future<void> deleteWorkout(String id) async {
     await _sqliteService.deleteWorkout(id);
+  }
+
+  @override
+  Future<List<FitnessMetric>> getMetrics() async {
+    return await _sqliteService.getMetrics();
+  }
+
+  @override
+  Future<List<FitnessMetric>> getMetricsByType(MetricType type) async {
+    return await _sqliteService.getMetricsByType(type);
+  }
+
+  @override
+  Future<List<FitnessMetric>> getMetricsByDateRange(
+      DateTime start, DateTime end) async {
+    return await _sqliteService.getMetricsByDateRange(start, end);
+  }
+
+  @override
+  Future<List<FitnessMetric>> getMetricsByTypeAndDateRange(
+    MetricType type,
+    DateTime start,
+    DateTime end,
+  ) async {
+    return await _sqliteService.getMetricsByTypeAndDateRange(
+      type,
+      start,
+      end,
+    );
+  }
+
+  @override
+  Future<FitnessMetric?> getLatestMetricByType(MetricType type) async {
+    return await _sqliteService.getLatestMetricByType(type);
+  }
+
+  @override
+  Future<void> insertMetric(FitnessMetric metric) async {
+    await _sqliteService.insertMetric(metric);
+  }
+
+  @override
+  Future<void> updateMetric(FitnessMetric metric) async {
+    await _sqliteService.updateMetric(metric);
+  }
+
+  @override
+  Future<void> deleteMetric(String id) async {
+    await _sqliteService.deleteMetric(id);
   }
 }

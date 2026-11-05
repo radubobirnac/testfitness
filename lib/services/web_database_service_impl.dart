@@ -3,6 +3,7 @@ import 'dart:html' show window;
 
 import 'package:testfitness/data/default_exercises.dart';
 import 'package:testfitness/models/exercise.dart';
+import 'package:testfitness/models/fitness_metric.dart';
 import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/models/workout_set.dart';
 import 'package:testfitness/services/database_interface.dart';
@@ -21,11 +22,13 @@ class WebDatabaseServiceImpl implements DatabaseInterface {
   final List<Exercise> _exercises = [];
   final List<Workout> _workouts = [];
   final Map<String, List<WorkoutSet>> _workoutSets = {};
+  final List<FitnessMetric> _metrics = [];
 
   // LocalStorage keys
   static const String _exercisesKey = 'testfitness_exercises';
   static const String _workoutsKey = 'testfitness_workouts';
   static const String _workoutSetsKey = 'testfitness_workout_sets';
+  static const String _metricsKey = 'testfitness_metrics';
 
   /// Initialize the database with default data
   @override
@@ -34,6 +37,7 @@ class WebDatabaseServiceImpl implements DatabaseInterface {
     _exercises.clear();
     _workouts.clear();
     _workoutSets.clear();
+    _metrics.clear();
 
     // Try to load data from localStorage first
     _loadFromLocalStorage();
@@ -94,8 +98,17 @@ class WebDatabaseServiceImpl implements DatabaseInterface {
         });
       }
 
+      // Load fitness metrics
+      final metricsJson = window.localStorage[_metricsKey];
+      if (metricsJson != null) {
+        final List<dynamic> metricsList = jsonDecode(metricsJson);
+        _metrics.addAll(
+          metricsList.map((m) => FitnessMetric.fromMap(m)).toList(),
+        );
+      }
+
       print(
-          'Loaded from localStorage: ${_exercises.length} exercises, ${_workouts.length} workouts');
+          'Loaded from localStorage: ${_exercises.length} exercises, ${_workouts.length} workouts, ${_metrics.length} metrics');
     } catch (e) {
       print('Error loading from localStorage: $e');
     }
@@ -126,6 +139,16 @@ class WebDatabaseServiceImpl implements DatabaseInterface {
       window.localStorage[_workoutSetsKey] = jsonEncode(workoutSetsMap);
     } catch (e) {
       print('Error saving workouts to localStorage: $e');
+    }
+  }
+
+  // Save fitness metrics to localStorage
+  void _saveMetricsToLocalStorage() {
+    try {
+      final metricsJson = jsonEncode(_metrics.map((m) => m.toMap()).toList());
+      window.localStorage[_metricsKey] = metricsJson;
+    } catch (e) {
+      print('Error saving metrics to localStorage: $e');
     }
   }
 
@@ -270,5 +293,72 @@ class WebDatabaseServiceImpl implements DatabaseInterface {
 
     // Save to localStorage
     _saveWorkoutsToLocalStorage();
+  }
+
+  // CRUD operations for fitness metrics
+
+  @override
+  Future<List<FitnessMetric>> getMetrics() async {
+    return List.from(_metrics);
+  }
+
+  @override
+  Future<List<FitnessMetric>> getMetricsByType(MetricType type) async {
+    final filtered =
+        _metrics.where((metric) => metric.type == type).toList(growable: false);
+    filtered.sort((a, b) => b.date.compareTo(a.date));
+    return filtered;
+  }
+
+  @override
+  Future<List<FitnessMetric>> getMetricsByDateRange(
+      DateTime start, DateTime end) async {
+    final filtered =
+        _metrics.where((metric) => !metric.date.isBefore(start) && !metric.date.isAfter(end)).toList(growable: false);
+    filtered.sort((a, b) => b.date.compareTo(a.date));
+    return filtered;
+  }
+
+  @override
+  Future<List<FitnessMetric>> getMetricsByTypeAndDateRange(
+    MetricType type,
+    DateTime start,
+    DateTime end,
+  ) async {
+    final filtered = _metrics
+        .where((metric) =>
+            metric.type == type &&
+            !metric.date.isBefore(start) &&
+            !metric.date.isAfter(end))
+        .toList(growable: false);
+    filtered.sort((a, b) => b.date.compareTo(a.date));
+    return filtered;
+  }
+
+  @override
+  Future<FitnessMetric?> getLatestMetricByType(MetricType type) async {
+    final metrics = await getMetricsByType(type);
+    return metrics.isEmpty ? null : metrics.first;
+  }
+
+  @override
+  Future<void> insertMetric(FitnessMetric metric) async {
+    _metrics.add(metric);
+    _saveMetricsToLocalStorage();
+  }
+
+  @override
+  Future<void> updateMetric(FitnessMetric metric) async {
+    final index = _metrics.indexWhere((m) => m.id == metric.id);
+    if (index != -1) {
+      _metrics[index] = metric;
+      _saveMetricsToLocalStorage();
+    }
+  }
+
+  @override
+  Future<void> deleteMetric(String id) async {
+    _metrics.removeWhere((metric) => metric.id == id);
+    _saveMetricsToLocalStorage();
   }
 }
