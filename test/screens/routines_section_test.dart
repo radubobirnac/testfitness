@@ -8,6 +8,16 @@ import 'package:testfitness/screens/routines_screen.dart';
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  final pushDay = Routine(
+    id: 'r1',
+    name: 'Push Day',
+    exercises: const [
+      RoutineExercise(exerciseId: 'bench', sets: 3),
+      RoutineExercise(exerciseId: 'ohp', sets: 3),
+    ],
+    createdAt: DateTime(2026, 1, 1),
+  );
+
   Future<void> pump(WidgetTester tester, Widget child) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -19,29 +29,50 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('empty Routines section shows hint', (tester) async {
-    await pump(tester, const RoutinesSection(workouts: []));
-    expect(find.text('Routines'), findsOneWidget);
-    expect(find.text('Save a workout as a routine from its ⋮ menu'),
-        findsOneWidget);
+  testWidgets('Routines strip renders nothing without routines',
+      (tester) async {
+    await pump(tester, const RoutinesStrip(workouts: []));
+    expect(find.text('Routines'), findsNothing);
+    expect(find.text('Manage'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('lists routines and reloads after a save', (tester) async {
-    await pump(tester, const RoutinesSection(workouts: []));
+  testWidgets('strip lists compact routine chips and reloads after a save',
+      (tester) async {
+    await pump(tester, const RoutinesStrip(workouts: []));
 
-    await tester.runAsync(() => RoutineRepository().saveRoutine(Routine(
-          id: 'r1',
-          name: 'Push Day',
-          exercises: const [
-            RoutineExercise(exerciseId: 'bench', sets: 3),
-            RoutineExercise(exerciseId: 'ohp', sets: 3),
-          ],
-          createdAt: DateTime(2026, 1, 1),
-        )));
+    await tester.runAsync(() => RoutineRepository().saveRoutine(pushDay));
     await tester.pumpAndSettle();
 
+    expect(find.text('Routines'), findsOneWidget);
     expect(find.text('Push Day'), findsOneWidget);
+    expect(find.text('2 ex'), findsOneWidget);
+
+    final chip = tester.getRect(find.ancestor(
+        of: find.text('Push Day'), matching: find.byType(InkWell)));
+    expect(chip.height, 56);
+    final manage = tester.getRect(find.widgetWithText(TextButton, 'Manage'));
+    expect(manage.height, greaterThanOrEqualTo(48));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('long-press a routine chip offers Rename and Delete',
+      (tester) async {
+    await tester.runAsync(() => RoutineRepository().saveRoutine(pushDay));
+    await pump(tester, const RoutinesStrip(workouts: []));
+
+    await tester.longPress(find.text('Push Day'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rename'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+  });
+
+  testWidgets('Manage opens the full routine list', (tester) async {
+    await tester.runAsync(() => RoutineRepository().saveRoutine(pushDay));
+    await pump(tester, const RoutinesStrip(workouts: []));
+
+    await tester.tap(find.text('Manage'));
+    await tester.pumpAndSettle();
     expect(find.text('2 exercises · not used yet'), findsOneWidget);
     final menu = tester.getRect(find.byTooltip('Routine actions'));
     expect(menu.height, greaterThanOrEqualTo(48));
