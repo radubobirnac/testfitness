@@ -523,14 +523,16 @@ class _RoutinesScreenState extends State<RoutinesScreen>
   }
 }
 
-/// Home-screen quick start: up to three "Start [routine name]" buttons.
+/// Home-screen quick start: a "Routines" [SectionHeader] with a "Manage"
+/// action and compact chips (same as [RoutinesStrip]) for up to
+/// [maxRoutines] routines. Tap = start, long-press = rename / delete.
 /// Renders nothing when there are no routines.
 class RoutineQuickStart extends StatefulWidget {
   const RoutineQuickStart({
     super.key,
     required this.workouts,
     this.repository,
-    this.maxRoutines = 3,
+    this.maxRoutines = 6,
   });
 
   final List<Workout> workouts;
@@ -547,45 +549,63 @@ class _RoutineQuickStartState extends State<RoutineQuickStart>
   late final RoutineRepository repository =
       widget.repository ?? RoutineRepository();
 
+  void _openManage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RoutinesScreen(
+          workouts: widget.workouts,
+          repository: repository,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final loaded = routines;
     if (loaded == null || loaded.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Your Routines',
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.bold),
+    final shown = loaded.take(widget.maxRoutines).toList();
+    return Column(
+      key: const Key('home_routines'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SectionHeader(
+          'Routines',
+          trailing: TextButton(
+            style: TextButton.styleFrom(
+              minimumSize: const Size(kMinTouchTarget, kMinTouchTarget),
+            ),
+            onPressed: _openManage,
+            child: const Text('Manage'),
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+        ),
+        // Intrinsic height (not a fixed 56) so large text still fits.
+        SingleChildScrollView(
+          padding: AppInsets.page,
+          scrollDirection: Axis.horizontal,
+          child: Row(
             children: [
-              for (final routine in loaded.take(widget.maxRoutines))
-                FilledButton.tonalIcon(
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(48, 48),
-                  ),
-                  onPressed: () => startRoutine(
-                      context, routine, widget.workouts,
-                      repository: repository),
-                  icon: const Icon(Icons.play_arrow),
-                  label: Text(
-                    'Start ${routine.name}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+              for (var i = 0; i < shown.length; i++) ...[
+                if (i > 0) const SizedBox(width: Gap.sm),
+                ConstrainedBox(
+                  constraints:
+                      const BoxConstraints(minHeight: kMinTouchTarget + 8),
+                  child: _RoutineChip(
+                    routine: shown[i],
+                    onTap: () => startRoutine(
+                        context, shown[i], widget.workouts,
+                        repository: repository),
+                    onLongPress: () =>
+                        showRoutineActionSheet(context, shown[i], repository),
                   ),
                 ),
+              ],
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

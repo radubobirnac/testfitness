@@ -1,415 +1,221 @@
-import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:testfitness/models/workout.dart';
-import 'package:testfitness/services/weight_tracking_service.dart';
+import 'package:flutter/material.dart';
+import 'package:testfitness/ui/app_ui.dart';
+import 'package:testfitness/ui/progress_period.dart';
+import 'package:testfitness/ui/progress_widgets.dart';
 
-/// Chart widget specifically for volume progression tracking
+/// Training volume (weight × reps of completed working sets) per bucket of
+/// the selected [PeriodWindow], with a dashed linear trend line and an
+/// optional cumulative view. Values are computed by the caller
+/// ([ProgressMath.volumePerBucket]) so the chart stays presentational.
 class VolumeProgressionChart extends StatefulWidget {
-  final List<Workout> workouts;
-  final String title;
-
   const VolumeProgressionChart({
     super.key,
-    required this.workouts,
-    this.title = 'Volume Progression',
+    required this.window,
+    required this.values,
+    required this.unitLabel,
+    this.title = 'Training volume',
   });
+
+  final PeriodWindow window;
+  final List<double> values;
+
+  /// Lower-case unit, e.g. "lbs".
+  final String unitLabel;
+  final String title;
 
   @override
   State<VolumeProgressionChart> createState() => _VolumeProgressionChartState();
 }
 
 class _VolumeProgressionChartState extends State<VolumeProgressionChart> {
-  WeightTrackingPeriod _selectedPeriod = WeightTrackingPeriod.weekly;
-  bool _showCumulative = false;
-  bool _showTrendLine = true;
+  bool _cumulative = false;
+
+  List<double> get _series {
+    if (!_cumulative) return widget.values;
+    var running = 0.0;
+    return [for (final v in widget.values) running += v];
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header with title and controls
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.title,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                ),
-                PopupMenuButton<WeightTrackingPeriod>(
-                  icon: const Icon(Icons.more_vert),
-                  onSelected: (period) {
-                    setState(() {
-                      _selectedPeriod = period;
-                    });
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: WeightTrackingPeriod.weekly,
-                      child: Text('Weekly'),
-                    ),
-                    const PopupMenuItem(
-                      value: WeightTrackingPeriod.monthly,
-                      child: Text('Monthly'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+    final scheme = Theme.of(context).colorScheme;
+    final values = _series;
+    final trend = values.length > 2 ? _trendLine(values) : null;
 
-            const SizedBox(height: 8),
-
-            // Toggle buttons
-            Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      Switch(
-                        value: _showCumulative,
-                        onChanged: (value) {
-                          setState(() {
-                            _showCumulative = value;
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      const Text('Cumulative'),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Row(
-                    children: [
-                      Switch(
-                        value: _showTrendLine,
-                        onChanged: (value) {
-                          setState(() {
-                            _showTrendLine = value;
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      const Text('Trend'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 16),
-
-            // Chart
-            SizedBox(
-              height: 250,
-              child: _buildChart(context),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Statistics
-            _buildStatistics(context),
-          ],
-        ),
+    return ProgressCard(
+      title: widget.title,
+      caption: _cumulative
+          ? 'Running total of weight × reps, ${widget.window.period.description}'
+          : 'Weight × reps per ${widget.window.unit}, '
+              '${widget.window.period.description}',
+      trailing: FilterChip(
+        key: const Key('volume_cumulative_chip'),
+        label: const Text('Total'),
+        tooltip: 'Show running total',
+        selected: _cumulative,
+        onSelected: (v) => setState(() => _cumulative = v),
       ),
-    );
-  }
-
-  Widget _buildChart(BuildContext context) {
-    final data = _showCumulative
-        ? WeightTrackingService.getCumulativeWeightLifted(
-            widget.workouts, _selectedPeriod)
-        : WeightTrackingService.getWeightLiftedByPeriod(
-            widget.workouts, _selectedPeriod);
-
-    if (data.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.trending_up,
-              size: 48,
-              color: Colors.grey[400],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'No volume data available',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Complete some workouts to see your volume progression!',
-              style: TextStyle(
-                color: Colors.grey[500],
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final spots = data.entries.toList().asMap().entries.map((entry) {
-      return FlSpot(entry.key.toDouble(), entry.value.value);
-    }).toList();
-
-    // Calculate trend line if enabled
-    List<FlSpot>? trendSpots;
-    if (_showTrendLine && spots.length > 1) {
-      trendSpots = _calculateTrendLine(spots);
-    }
-
-    return LineChart(
-      LineChartData(
-        gridData: FlGridData(
-          show: true,
-          drawVerticalLine: true,
-          horizontalInterval: null,
-          verticalInterval: null,
-          getDrawingHorizontalLine: (value) {
-            return FlLine(
-              color: Colors.grey.withValues(alpha: 0.3),
-              strokeWidth: 1,
-            );
-          },
-          getDrawingVerticalLine: (value) {
-            return FlLine(
-              color: Colors.grey.withValues(alpha: 0.3),
-              strokeWidth: 1,
-            );
-          },
-        ),
-        titlesData: FlTitlesData(
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 60,
-              getTitlesWidget: (value, meta) {
-                return Text(
-                  _formatWeight(value),
-                  style: const TextStyle(fontSize: 10),
-                );
-              },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: kProgressChartHeight,
+            child: Semantics(
+              label: '${widget.title} chart, ${values.length} '
+                  '${widget.window.unit}s, latest '
+                  '${ProgressMath.formatVolume(values.isEmpty ? 0 : values.last)} '
+                  '${widget.unitLabel}',
+              child: LineChart(_data(context, values, trend)),
             ),
           ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 30,
-              getTitlesWidget: (value, meta) {
-                final index = value.toInt();
-                if (index >= 0 && index < data.length) {
-                  final entry = data.entries.toList()[index];
-                  return Text(
-                    _formatPeriodLabel(entry.key),
-                    style: const TextStyle(fontSize: 10),
-                  );
-                }
-                return const Text('');
-              },
-            ),
+          const SizedBox(height: Gap.sm),
+          Wrap(
+            spacing: Gap.lg,
+            runSpacing: Gap.xs,
+            children: [
+              ChartLegendItem(
+                  color: scheme.primary,
+                  label: 'Volume (${widget.unitLabel})'),
+              if (trend != null)
+                ChartLegendItem(
+                    color: scheme.tertiary, label: 'Trend', dashed: true),
+            ],
           ),
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        ),
-        borderData: FlBorderData(
-          show: true,
-          border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
-        ),
-        minX: 0,
-        maxX: (data.length - 1).toDouble(),
-        minY: 0,
-        maxY: spots.isEmpty
-            ? 100
-            : spots.map((s) => s.y).reduce((a, b) => a > b ? a : b) * 1.1,
-        lineBarsData: [
-          // Main data line
-          LineChartBarData(
-            spots: spots,
-            isCurved: true,
-            gradient: LinearGradient(
-              colors: [
-                Theme.of(context).colorScheme.primary,
-                Theme.of(context).colorScheme.secondary,
-              ],
-            ),
-            barWidth: 3,
-            isStrokeCapRound: true,
-            dotData: FlDotData(
-              show: true,
-              getDotPainter: (spot, percent, barData, index) {
-                return FlDotCirclePainter(
-                  radius: 4,
-                  color: Theme.of(context).colorScheme.primary,
-                  strokeWidth: 2,
-                  strokeColor: Colors.white,
-                );
-              },
-            ),
-            belowBarData: BarAreaData(
-              show: true,
-              gradient: LinearGradient(
-                colors: [
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
-                ],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
-          ),
-          // Trend line
-          if (trendSpots != null)
-            LineChartBarData(
-              spots: trendSpots,
-              isCurved: false,
-              color: Colors.orange,
-              barWidth: 2,
-              isStrokeCapRound: true,
-              dotData: const FlDotData(show: false),
-              dashArray: [5, 5],
-            ),
         ],
       ),
     );
   }
 
-  Widget _buildStatistics(BuildContext context) {
-    final stats = WeightTrackingService.getWeightTrackingStats(widget.workouts);
-    final data = WeightTrackingService.getWeightLiftedByPeriod(
-        widget.workouts, _selectedPeriod);
+  LineChartData _data(
+      BuildContext context, List<double> values, List<FlSpot>? trend) {
+    final scheme = Theme.of(context).colorScheme;
+    final axis = chartAxisStyle(context);
+    final buckets = widget.window.buckets;
+    final spots = [
+      for (var i = 0; i < values.length; i++) FlSpot(i.toDouble(), values[i]),
+    ];
+    final maxValue =
+        values.isEmpty ? 0.0 : values.reduce((a, b) => a > b ? a : b);
+    final maxY = maxValue <= 0 ? 100.0 : maxValue * 1.15;
+    final single = spots.length == 1;
+    final labelEvery = (buckets.length / 4).ceil().clamp(1, 1000);
 
-    // Calculate progression percentage
-    double progressionPercentage = 0.0;
-    if (data.length >= 2) {
-      final values = data.values.toList();
-      final firstValue = values.first;
-      final lastValue = values.last;
-      if (firstValue > 0) {
-        progressionPercentage = ((lastValue - firstValue) / firstValue) * 100;
-      }
-    }
-
-    return Row(
-      children: [
-        Expanded(
-          child: _buildStatCard(
-            'Total Volume',
-            _formatWeight(stats.totalWeightLifted),
-            Icons.fitness_center,
-            Colors.blue,
+    return LineChartData(
+      minX: single ? -0.5 : 0,
+      maxX: single ? 0.5 : (spots.length - 1).toDouble(),
+      minY: 0,
+      maxY: maxY,
+      gridData: FlGridData(
+        show: true,
+        drawVerticalLine: false,
+        horizontalInterval: maxY / 4,
+        getDrawingHorizontalLine: (_) =>
+            FlLine(color: scheme.outlineVariant, strokeWidth: 1),
+      ),
+      borderData: FlBorderData(show: false),
+      titlesData: FlTitlesData(
+        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles:
+            const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        leftTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 40,
+            interval: maxY / 4,
+            getTitlesWidget: (value, meta) {
+              if (value == meta.max) return const SizedBox.shrink();
+              return Text(ProgressMath.formatAxis(value), style: axis);
+            },
           ),
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _buildStatCard(
-            'Avg/Workout',
-            _formatWeight(stats.averagePerWorkout),
-            Icons.trending_up,
-            Colors.green,
+        bottomTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 24,
+            interval: 1,
+            getTitlesWidget: (value, meta) {
+              final i = value.round();
+              if (value != i || i < 0 || i >= buckets.length) {
+                return const SizedBox.shrink();
+              }
+              // Anchor labels on the latest bucket so it is always shown.
+              if ((buckets.length - 1 - i) % labelEvery != 0) {
+                return const SizedBox.shrink();
+              }
+              return Padding(
+                padding: const EdgeInsets.only(top: Gap.xs),
+                child: Text(buckets[i].label, style: axis),
+              );
+            },
           ),
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _buildStatCard(
-            'Progression',
-            '${progressionPercentage.toStringAsFixed(1)}%',
-            progressionPercentage >= 0
-                ? Icons.arrow_upward
-                : Icons.arrow_downward,
-            progressionPercentage >= 0 ? Colors.green : Colors.red,
+      ),
+      lineTouchData: LineTouchData(
+        touchTooltipData: LineTouchTooltipData(
+          getTooltipColor: (_) => scheme.inverseSurface,
+          fitInsideHorizontally: true,
+          fitInsideVertically: true,
+          getTooltipItems: (touched) => [
+            for (final s in touched)
+              s.barIndex == 0
+                  ? LineTooltipItem(
+                      '${buckets[s.x.round()].label}\n'
+                      '${ProgressMath.formatVolume(s.y)} ${widget.unitLabel}',
+                      TextStyle(color: scheme.onInverseSurface),
+                    )
+                  : null,
+          ],
+        ),
+      ),
+      lineBarsData: [
+        LineChartBarData(
+          spots: spots,
+          isCurved: false,
+          color: scheme.primary,
+          barWidth: 3,
+          isStrokeCapRound: true,
+          dotData: FlDotData(
+            show: true,
+            getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
+              radius: 3.5,
+              color: scheme.primary,
+              strokeWidth: 2,
+              strokeColor: scheme.surfaceContainerLow,
+            ),
+          ),
+          belowBarData: BarAreaData(
+            show: true,
+            color: scheme.primary.withValues(alpha: 0.12),
           ),
         ),
+        if (trend != null)
+          LineChartBarData(
+            spots: trend,
+            color: scheme.tertiary,
+            barWidth: 2,
+            dashArray: const [6, 4],
+            dotData: const FlDotData(show: false),
+          ),
       ],
     );
   }
 
-  Widget _buildStatCard(
-      String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: color,
-              fontSize: 14,
-            ),
-          ),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  List<FlSpot> _calculateTrendLine(List<FlSpot> spots) {
-    if (spots.length < 2) return [];
-
-    // Simple linear regression
-    double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-    final n = spots.length;
-
-    for (final spot in spots) {
-      sumX += spot.x;
-      sumY += spot.y;
-      sumXY += spot.x * spot.y;
-      sumXX += spot.x * spot.x;
+  /// Least-squares line through the points.
+  static List<FlSpot> _trendLine(List<double> values) {
+    final n = values.length;
+    var sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumXX = 0.0;
+    for (var i = 0; i < n; i++) {
+      sumX += i;
+      sumY += values[i];
+      sumXY += i * values[i];
+      sumXX += i * i;
     }
-
-    final slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    final denom = n * sumXX - sumX * sumX;
+    if (denom == 0) return const [];
+    final slope = (n * sumXY - sumX * sumY) / denom;
     final intercept = (sumY - slope * sumX) / n;
-
-    return [
-      FlSpot(spots.first.x, slope * spots.first.x + intercept),
-      FlSpot(spots.last.x, slope * spots.last.x + intercept),
-    ];
-  }
-
-  String _formatWeight(double weight) {
-    if (weight >= 1000000) {
-      return '${(weight / 1000000).toStringAsFixed(1)}M';
-    } else if (weight >= 1000) {
-      return '${(weight / 1000).toStringAsFixed(1)}K';
-    } else {
-      return weight.toStringAsFixed(0);
-    }
-  }
-
-  String _formatPeriodLabel(String period) {
-    if (_selectedPeriod == WeightTrackingPeriod.weekly) {
-      // Format: "Week of Jan 1"
-      return period.length > 8 ? period.substring(0, 8) : period;
-    } else {
-      // Format: "Jan 2024"
-      return period.length > 8 ? period.substring(0, 8) : period;
-    }
+    double at(int x) => (slope * x + intercept).clamp(0, double.infinity);
+    return [FlSpot(0, at(0)), FlSpot((n - 1).toDouble(), at(n - 1))];
   }
 }

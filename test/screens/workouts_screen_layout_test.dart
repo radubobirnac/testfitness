@@ -208,7 +208,10 @@ void main() {
 
     testWidgets('375x812: 6+ cards visible, grouped headers, routines strip',
         (tester) async {
-      await pumpScreen(tester);
+      // Normal case: no overdue backlog (that adds a "Mark overdue done"
+      // action to the Planned header; see workouts_overdue_test.dart).
+      await pumpScreen(tester,
+          workouts: sampleWorkouts.where((w) => w.id != 'p2').toList());
       expect(tester.takeException(), isNull);
       expect(bloc.loadCount, 1);
 

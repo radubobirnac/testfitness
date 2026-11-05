@@ -28,7 +28,6 @@ void main() {
       weightUnitLabel: 'Lbs',
     )));
 
-    expect(find.text('Weekly check-in'), findsOneWidget);
     expect(find.byKey(const ValueKey('weekly_check_in_empty')), findsOneWidget);
   });
 
@@ -84,8 +83,12 @@ void main() {
     expect(find.textContaining('heaviest 205 lbs', findRichText: true),
         findsOneWidget);
     expect(find.text('Chest · 12'), findsOneWidget);
-    expect(find.text('Not trained in 7+ days: Hamstrings, Back'),
-        findsOneWidget);
+    expect(find.text('Week of Nov 2'), findsOneWidget);
+    expect(find.text('Not trained in 7+ days'), findsOneWidget);
+    expect(find.text('Hamstrings'), findsOneWidget);
+    expect(find.text('Back'), findsOneWidget);
+    expect(find.text('New records'), findsOneWidget);
+    expect(find.text('Plateaus'), findsOneWidget);
     expect(
         find.text('Bench Press has stalled for 3 sessions — try a lighter week'),
         findsOneWidget);

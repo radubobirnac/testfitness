@@ -40,6 +40,8 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
       await _onDeleteRequested(event, emit);
     } else if (event is WorkoutCompleteRequested) {
       await _onCompleteRequested(event, emit);
+    } else if (event is WorkoutsCompleteOnPlannedDayRequested) {
+      await _onCompleteOnPlannedDayRequested(event, emit);
     } else if (event is WorkoutDuplicateRequested) {
       await _onDuplicateRequested(event, emit);
     } else if (event is WorkoutSetAddRequested) {
@@ -362,13 +364,48 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
   /// Complete a workout
   Future<void> _onCompleteRequested(
       WorkoutCompleteRequested event, Emitter<WorkoutState> emit) async {
+    await _completeOne(event, emit);
+  }
+
+  Future<void> _onCompleteOnPlannedDayRequested(
+      WorkoutsCompleteOnPlannedDayRequested event,
+      Emitter<WorkoutState> emit) async {
+    try {
+      emit(state.copyWith(
+          isLoading: true, clearError: true, clearSuccess: true));
+      final count =
+          await _workoutRepository.completeWorkoutsOnPlannedDay(event.workoutIds);
+      final workouts = await _workoutRepository.getWorkouts();
+      emit(state.copyWith(
+        workouts: workouts,
+        filteredWorkouts: _applyFilter(workouts, state.currentFilter),
+        isLoading: false,
+        successMessage: count == 1
+            ? 'Marked 1 workout as done on its planned day'
+            : 'Marked $count workouts as done on their planned days',
+      ));
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to complete workouts', error, stackTrace);
+      emit(state.copyWith(
+        isLoading: false,
+        errorMessage: 'Failed to mark workouts as done: $error',
+      ));
+    }
+  }
+
+  Future<void> _completeOne(
+      WorkoutCompleteRequested event, Emitter<WorkoutState> emit) async {
     try {
       AppLogger.info('Completing workout: ${event.workoutId}');
       emit(state.copyWith(
           isLoading: true, clearError: true, clearSuccess: true));
 
-      await _workoutRepository.completeWorkout(event.workoutId,
-          durationMinutes: event.durationMinutes);
+      await _workoutRepository.completeWorkout(
+        event.workoutId,
+        durationMinutes: event.durationMinutes,
+        completedAt: event.completedAt,
+        markSetsDone: event.markSetsDone,
+      );
 
       // Reload workouts to get updated list
       final workouts = await _workoutRepository.getWorkouts();

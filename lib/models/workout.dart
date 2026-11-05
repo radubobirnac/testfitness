@@ -70,12 +70,38 @@ class Workout extends Equatable {
   }
 
   /// Mark this workout as completed
-  Workout complete({int? durationMinutes}) {
+  /// Mark this workout as done.
+  ///
+  /// [at] backdates the completion (e.g. a workout done on its planned day
+  /// months ago); defaults to now. With [markSetsDone], sets that weren't
+  /// ticked off are marked completed at that same time, so history, the
+  /// calendar and the coach count them on the right day.
+  Workout complete({
+    int? durationMinutes,
+    DateTime? at,
+    bool markSetsDone = false,
+  }) {
+    final when = at ?? DateTime.now();
     return copyWith(
       isCompleted: true,
-      completedDate: DateTime.now(),
+      completedDate: when,
       durationMinutes: durationMinutes,
+      sets: markSetsDone
+          ? sets
+              .map((s) => s.isCompleted
+                  ? s
+                  : s.copyWith(isCompleted: true, completedAt: when))
+              .toList()
+          : null,
     );
+  }
+
+  /// The moment to use when marking a planned workout done "on the day":
+  /// its scheduled date at midday (falls back to now if unscheduled).
+  DateTime get plannedCompletionTime {
+    final d = scheduledDate;
+    if (d == null) return DateTime.now();
+    return DateTime(d.year, d.month, d.day, 12);
   }
 
   /// Add a set to this workout
