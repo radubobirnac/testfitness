@@ -9,9 +9,10 @@ import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/repositories/routine_repository.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
+import 'package:testfitness/ui/app_ui.dart';
 import 'package:testfitness/utils/app_logger.dart';
 
-/// Shared routine UI: the Workouts-tab section, the Home quick-start row and
+/// Shared routine UI: the Workouts-tab strip, the manage page, the Home quick-start row and
 /// the save / start / rename / delete flows.
 
 /// "3 exercises · last used yesterday"
@@ -196,10 +197,115 @@ mixin _RoutineLoader<T extends StatefulWidget> on State<T> {
 
 enum _RoutineAction { rename, delete }
 
-/// "Routines" section at the top of the Workouts tab: horizontal cards,
-/// tap = start, long-press / ⋮ = rename or delete.
-class RoutinesSection extends StatefulWidget {
-  const RoutinesSection({
+/// Asks for a new name and saves it.
+Future<void> renameRoutine(
+  BuildContext context,
+  Routine routine,
+  RoutineRepository repository,
+) async {
+  final name = await showRoutineNameDialog(
+    context,
+    title: 'Rename routine',
+    initialName: routine.name,
+    confirmLabel: 'Rename',
+  );
+  if (name == null || name == routine.name) return;
+  await repository.saveRoutine(routine.copyWith(name: name));
+}
+
+/// Confirms, then deletes [routine]. Past workouts are kept.
+Future<void> confirmDeleteRoutine(
+  BuildContext context,
+  Routine routine,
+  RoutineRepository repository,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      final colorScheme = Theme.of(context).colorScheme;
+      return AlertDialog(
+        title: const Text('Delete routine'),
+        content: Text('Delete "${routine.name}"? Past workouts are kept.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: colorScheme.error,
+              foregroundColor: colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      );
+    },
+  );
+  if (confirmed == true) await repository.deleteRoutine(routine.id);
+}
+
+Future<void> _runRoutineAction(
+  BuildContext context,
+  _RoutineAction action,
+  Routine routine,
+  RoutineRepository repository,
+) async {
+  switch (action) {
+    case _RoutineAction.rename:
+      await renameRoutine(context, routine, repository);
+    case _RoutineAction.delete:
+      await confirmDeleteRoutine(context, routine, repository);
+  }
+}
+
+/// Long-press sheet: Rename / Delete.
+Future<void> showRoutineActionSheet(
+  BuildContext context,
+  Routine routine,
+  RoutineRepository repository,
+) async {
+  HapticFeedback.mediumImpact();
+  final action = await showModalBottomSheet<_RoutineAction>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) {
+      final colorScheme = Theme.of(context).colorScheme;
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Rename'),
+              onTap: () => Navigator.pop(context, _RoutineAction.rename),
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: colorScheme.error),
+              title:
+                  Text('Delete', style: TextStyle(color: colorScheme.error)),
+              onTap: () => Navigator.pop(context, _RoutineAction.delete),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+  if (action != null && context.mounted) {
+    await _runRoutineAction(context, action, routine, repository);
+  }
+}
+
+/// Compact routine label for the strip: "3 ex".
+String shortRoutineCount(Routine routine) => '${routine.exercises.length} ex';
+
+/// Compact "Routines" strip on the Workouts tab: a [SectionHeader] with a
+/// "Manage" action and 56dp chips (name + "N ex"). Tap = start,
+/// long-press = rename / delete. Renders nothing when there are no routines
+/// (the empty hint lives in the Start workout sheet).
+class RoutinesStrip extends StatefulWidget {
+  const RoutinesStrip({
     super.key,
     required this.workouts,
     this.repository,
@@ -209,202 +315,112 @@ class RoutinesSection extends StatefulWidget {
   final RoutineRepository? repository;
 
   @override
-  State<RoutinesSection> createState() => _RoutinesSectionState();
+  State<RoutinesStrip> createState() => _RoutinesStripState();
 }
 
-class _RoutinesSectionState extends State<RoutinesSection>
-    with _RoutineLoader<RoutinesSection> {
+class _RoutinesStripState extends State<RoutinesStrip>
+    with _RoutineLoader<RoutinesStrip> {
   @override
   late final RoutineRepository repository =
       widget.repository ?? RoutineRepository();
 
-  Future<void> _onAction(_RoutineAction action, Routine routine) async {
-    switch (action) {
-      case _RoutineAction.rename:
-        final name = await showRoutineNameDialog(
-          context,
-          title: 'Rename routine',
-          initialName: routine.name,
-          confirmLabel: 'Rename',
-        );
-        if (name == null || name == routine.name) return;
-        await repository.saveRoutine(routine.copyWith(name: name));
-      case _RoutineAction.delete:
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) {
-            final colorScheme = Theme.of(context).colorScheme;
-            return AlertDialog(
-              title: const Text('Delete routine'),
-              content: Text('Delete "${routine.name}"? Past workouts are kept.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: colorScheme.error,
-                    foregroundColor: colorScheme.onError,
-                  ),
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Delete'),
-                ),
-              ],
-            );
-          },
-        );
-        if (confirmed == true) await repository.deleteRoutine(routine.id);
-    }
+  void _openManage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RoutinesScreen(
+          workouts: widget.workouts,
+          repository: repository,
+        ),
+      ),
+    );
   }
 
-  Future<void> _showActionSheet(Routine routine) async {
-    HapticFeedback.mediumImpact();
-    final action = await showModalBottomSheet<_RoutineAction>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        final colorScheme = Theme.of(context).colorScheme;
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: const Text('Rename'),
-                onTap: () => Navigator.pop(context, _RoutineAction.rename),
-              ),
-              ListTile(
-                leading: Icon(Icons.delete_outline, color: colorScheme.error),
-                title: Text('Delete',
-                    style: TextStyle(color: colorScheme.error)),
-                onTap: () => Navigator.pop(context, _RoutineAction.delete),
-              ),
-            ],
+  @override
+  Widget build(BuildContext context) {
+    final loaded = routines;
+    if (loaded == null || loaded.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SectionHeader(
+          'Routines',
+          trailing: TextButton(
+            style: TextButton.styleFrom(
+              minimumSize: const Size(kMinTouchTarget, kMinTouchTarget),
+            ),
+            onPressed: _openManage,
+            child: const Text('Manage'),
           ),
-        );
-      },
+        ),
+        SizedBox(
+          height: 56,
+          child: ListView.separated(
+            padding: AppInsets.page,
+            scrollDirection: Axis.horizontal,
+            itemCount: loaded.length,
+            separatorBuilder: (_, __) => const SizedBox(width: Gap.sm),
+            itemBuilder: (context, index) => _RoutineChip(
+              routine: loaded[index],
+              onTap: () => startRoutine(
+                  context, loaded[index], widget.workouts,
+                  repository: repository),
+              onLongPress: () =>
+                  showRoutineActionSheet(context, loaded[index], repository),
+            ),
+          ),
+        ),
+      ],
     );
-    if (action != null && mounted) await _onAction(action, routine);
   }
+}
+
+class _RoutineChip extends StatelessWidget {
+  const _RoutineChip({
+    required this.routine,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final Routine routine;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final loaded = routines;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Routines', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 8),
-          if (loaded == null)
-            const SizedBox(height: 48)
-          else if (loaded.isEmpty)
-            Container(
-              width: double.infinity,
-              constraints: const BoxConstraints(minHeight: 48),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.bookmark_border,
-                      color: colorScheme.onSurfaceVariant),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Save a workout as a routine from its ⋮ menu',
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(color: colorScheme.onSurfaceVariant),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else
-            SizedBox(
-              height: 104,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: loaded.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) =>
-                    _buildCard(context, loaded[index]),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCard(BuildContext context, Routine routine) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return SizedBox(
-      width: 196,
-      child: Card(
-        margin: EdgeInsets.zero,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 96, maxWidth: 168),
+      child: Material(
         color: colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => startRoutine(context, routine, widget.workouts,
-              repository: repository),
-          onLongPress: () => _showActionSheet(routine),
+          onTap: onTap,
+          onLongPress: onLongPress,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 0, 8),
+            padding: const EdgeInsets.symmetric(
+                horizontal: Gap.md, vertical: Gap.sm),
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        routine.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          color: colorScheme.onSecondaryContainer,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    PopupMenuButton<_RoutineAction>(
-                      tooltip: 'Routine actions',
-                      icon: Icon(Icons.more_vert,
-                          color: colorScheme.onSecondaryContainer),
-                      style: IconButton.styleFrom(
-                          minimumSize: const Size(48, 48)),
-                      onSelected: (action) => _onAction(action, routine),
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(
-                          value: _RoutineAction.rename,
-                          child: Text('Rename'),
-                        ),
-                        PopupMenuItem(
-                          value: _RoutineAction.delete,
-                          child: Text('Delete'),
-                        ),
-                      ],
-                    ),
-                  ],
+                Text(
+                  routine.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: colorScheme.onSecondaryContainer,
+                  ),
                 ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Text(
-                      describeRoutine(routine),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSecondaryContainer,
-                      ),
-                    ),
+                Text(
+                  shortRoutineCount(routine),
+                  maxLines: 1,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSecondaryContainer,
                   ),
                 ),
               ],
@@ -412,6 +428,97 @@ class _RoutinesSectionState extends State<RoutinesSection>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Full-page routine management: tap = start, ⋮ / long-press = rename or
+/// delete.
+class RoutinesScreen extends StatefulWidget {
+  const RoutinesScreen({
+    super.key,
+    required this.workouts,
+    this.repository,
+  });
+
+  final List<Workout> workouts;
+  final RoutineRepository? repository;
+
+  @override
+  State<RoutinesScreen> createState() => _RoutinesScreenState();
+}
+
+class _RoutinesScreenState extends State<RoutinesScreen>
+    with _RoutineLoader<RoutinesScreen> {
+  @override
+  late final RoutineRepository repository =
+      widget.repository ?? RoutineRepository();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final loaded = routines;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Routines')),
+      body: loaded == null
+          ? const Center(child: CircularProgressIndicator())
+          : loaded.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(Gap.xl),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.bookmark_border,
+                            size: 48, color: colorScheme.onSurfaceVariant),
+                        const SizedBox(height: Gap.md),
+                        Text(
+                          'Save a workout as a routine from its ⋮ menu',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colorScheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: loaded.length,
+                  itemBuilder: (context, index) {
+                    final routine = loaded[index];
+                    return ListTile(
+                      leading: const Icon(Icons.bookmark_outline),
+                      title: Text(routine.name,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(describeRoutine(routine)),
+                      onTap: () => startRoutine(
+                          context, routine, widget.workouts,
+                          repository: repository),
+                      onLongPress: () =>
+                          showRoutineActionSheet(context, routine, repository),
+                      trailing: PopupMenuButton<_RoutineAction>(
+                        tooltip: 'Routine actions',
+                        style: IconButton.styleFrom(
+                          minimumSize:
+                              const Size(kMinTouchTarget, kMinTouchTarget),
+                        ),
+                        onSelected: (action) => _runRoutineAction(
+                            context, action, routine, repository),
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: _RoutineAction.rename,
+                            child: Text('Rename'),
+                          ),
+                          PopupMenuItem(
+                            value: _RoutineAction.delete,
+                            child: Text('Delete'),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
     );
   }
 }
