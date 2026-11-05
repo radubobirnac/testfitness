@@ -120,6 +120,24 @@ class _HomeScreenState extends State<HomeScreen> {
       BuildContext context, List<Workout> allWorkouts) async {
     AppLogger.info('HomeScreen: Creating AI workout');
 
+    // No AI available: open the coach's workout directly (same one the card
+    // describes), without AI-only questions or loading dialogs.
+    if (_usingCoach) {
+      final coachWorkout = await _buildCoachWorkout(allWorkouts);
+      if (!mounted) return;
+      // ignore: use_build_context_synchronously
+      context.read<WorkoutBloc>().add(WorkoutCreateRequested(coachWorkout));
+      // ignore: use_build_context_synchronously
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) =>
+              ExerciseDetailScreen.editWorkout(workoutId: coachWorkout.id),
+        ),
+      ).then((_) => _refreshWorkouts());
+      return;
+    }
+
     final preference = await _showWorkoutPreferenceDialog(context);
     if (!mounted || preference == null) return;
 
@@ -300,14 +318,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     children: [
                       Icon(
-                        Icons.smart_toy,
+                        _usingCoach ? Icons.insights : Icons.smart_toy,
                         size: 48,
                         color: Theme.of(context).colorScheme.primary,
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'AI Workout Suggestion',
-                        style: TextStyle(
+                      Text(
+                        _usingCoach
+                            ? 'Coach Suggestion'
+                            : 'AI Workout Suggestion',
+                        style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
@@ -318,17 +338,19 @@ class _HomeScreenState extends State<HomeScreen> {
                         builder: (context, snapshot) {
                           if (snapshot.connectionState ==
                               ConnectionState.waiting) {
-                            return const Row(
+                            return Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                SizedBox(
+                                const SizedBox(
                                   width: 16,
                                   height: 16,
                                   child:
                                       CircularProgressIndicator(strokeWidth: 2),
                                 ),
-                                SizedBox(width: 8),
-                                Text('AI analyzing your patterns...'),
+                                const SizedBox(width: 8),
+                                Text(_usingCoach
+                                    ? 'Coach is planning your next session...'
+                                    : 'AI analyzing your patterns...'),
                               ],
                             );
                           }
@@ -370,7 +392,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                           .colorScheme
                                           .secondary,
                                     ),
-                                    child: const Text('Create AI Workout'),
+                                    child: Text(_usingCoach
+                                        ? 'Start This Workout'
+                                        : 'Create AI Workout'),
                                   ),
                                   OutlinedButton(
                                     onPressed: () {
@@ -686,6 +710,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Get AI workout suggestion based on recent workout patterns
+  /// True when suggestions come from the offline coach (no AI key / offline).
+  bool get _usingCoach => !AIService().isAvailable;
+
   /// Offline, rules-based workout built by the progression coach.
   Future<Workout> _buildCoachWorkout(List<Workout> allWorkouts) async {
     final exercises = await ExerciseRepository().getExercises();

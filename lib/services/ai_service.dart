@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:testfitness/services/api_key_service.dart';
 import 'package:testfitness/models/workout.dart';
@@ -73,6 +75,21 @@ class AIService {
     );
   }
 
+  /// Maximum time to wait for a Gemini response before giving up, so callers
+  /// can fall back (e.g. to the offline coach) instead of spinning forever.
+  static const Duration requestTimeout = Duration(seconds: 30);
+
+  Future<GenerateContentResponse> _generate(List<Content> content) async {
+    try {
+      return await _requireModel()
+          .generateContent(content)
+          .timeout(requestTimeout);
+    } on TimeoutException {
+      throw AIServiceException(
+          'AI took too long to respond. Check your connection and try again.');
+    }
+  }
+
   GenerativeModel _requireModel() {
     final key = _apiKey;
     if (key == null || key.isEmpty) {
@@ -114,7 +131,7 @@ class AIService {
       );
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
@@ -161,7 +178,7 @@ Example format:
 ''';
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
@@ -196,7 +213,7 @@ Example format:
       final prompt = _buildProgressAnalysisPrompt(completedWorkouts, timeframe);
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
@@ -240,7 +257,7 @@ Requirements:
 ''';
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
@@ -273,7 +290,7 @@ Requirements:
       );
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
@@ -304,7 +321,7 @@ Requirements:
       );
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
@@ -340,7 +357,7 @@ Requirements:
 ''';
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
@@ -375,7 +392,7 @@ Requirements:
       );
 
       final content = [Content.text(prompt)];
-      final response = await _requireModel().generateContent(content);
+      final response = await _generate(content);
 
       if (response.text == null || response.text!.isEmpty) {
         throw AIServiceException('AI generated empty response');
