@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:testfitness/services/vo2_max_service.dart';
 import 'package:testfitness/services/heart_rate_service.dart';
@@ -34,7 +36,16 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
   final int _totalIntervals = 5;
   final Duration _intervalDuration = const Duration(minutes: 1);
   final Duration _restDuration = const Duration(minutes: 2);
+  final Duration _warmUpDuration = const Duration(minutes: 2);
   Duration _remainingTime = Duration.zero;
+  Timer? _intervalTicker;
+  DateTime? _phaseEndsAt;
+
+  // Stream subscriptions (cancelled in dispose)
+  StreamSubscription<String>? _coachingSubscription;
+  StreamSubscription<HeartRateZoneStatus>? _zoneSubscription;
+  StreamSubscription<int>? _heartRateSubscription;
+  StreamSubscription<bool>? _connectionSubscription;
 
   // Heart rate data
   int _currentHeartRate = 0;
@@ -95,7 +106,7 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
 
   void _setupStreams() {
     // Listen to coaching messages
-    _vo2MaxService.coachingStream.listen((message) {
+    _coachingSubscription = _vo2MaxService.coachingStream.listen((message) {
       if (mounted) {
         setState(() {
           _currentCoaching = message;
@@ -104,7 +115,7 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
     });
 
     // Listen to zone status updates
-    _vo2MaxService.zoneStream.listen((status) {
+    _zoneSubscription = _vo2MaxService.zoneStream.listen((status) {
       if (mounted) {
         setState(() {
           _currentZoneStatus = status;
@@ -119,9 +130,10 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
       }
     });
 
-    // Listen to real heart rate updates
-    _heartRateService.heartRateStream.listen((heartRate) {
-      if (mounted) {
+    // Listen to real heart rate updates (only real strap data, never simulated)
+    _heartRateSubscription =
+        _heartRateService.heartRateStream.listen((heartRate) {
+      if (mounted && _isTrainingActive) {
         setState(() {
           _currentHeartRate = heartRate;
 
@@ -143,10 +155,16 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
     });
 
     // Listen to connection status changes
-    _heartRateService.connectionStream.listen((isConnected) {
+    _connectionSubscription =
+        _heartRateService.connectionStream.listen((isConnected) {
       if (mounted) {
         setState(() {
-          // Update UI when connection status changes
+          if (!isConnected) {
+            // Don't keep showing a stale reading/zone once the strap drops.
+            _currentHeartRate = 0;
+            _currentZoneStatus = null;
+            _pulseController.stop();
+          }
         });
       }
     });
@@ -157,96 +175,101 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
       _isTrainingActive = true;
       _currentInterval = 0;
       _isInInterval = false;
-      _remainingTime = const Duration(minutes: 2); // Start with warm-up
+      _remainingTime = _warmUpDuration; // Start with warm-up
       _sessionReadings.clear();
+      _currentHeartRate = 0;
+      _currentZoneStatus = null;
+      _currentCoaching = '';
     });
 
     _vo2MaxService.startCoaching();
-    _startHeartRateSimulation();
-    _startIntervalTimer();
+    _startIntervalTimer(_warmUpDuration);
 
     AppLogger.info('VO2 Max training session started');
   }
 
   void _stopTraining() {
-    setState(() {
-      _isTrainingActive = false;
-    });
+    _cancelIntervalTimer();
+    final wasActive = _isTrainingActive;
+    _isTrainingActive = false;
+    if (wasActive) _vo2MaxService.stopCoaching();
+    if (!mounted) return;
 
-    _vo2MaxService.stopCoaching();
+    setState(() {});
     _pulseController.stop();
 
     AppLogger.info('VO2 Max training session stopped');
   }
 
-  void _startIntervalTimer() {
-    if (!_isTrainingActive) return;
-
-    Future.delayed(const Duration(seconds: 1), () {
-      if (_isTrainingActive && mounted) {
-        setState(() {
-          if (_remainingTime.inSeconds > 0) {
-            _remainingTime = Duration(seconds: _remainingTime.inSeconds - 1);
-          } else {
-            _nextPhase();
-          }
-        });
-        _startIntervalTimer();
-      }
-    });
+  void _cancelIntervalTimer() {
+    _intervalTicker?.cancel();
+    _intervalTicker = null;
+    _phaseEndsAt = null;
   }
 
-  void _nextPhase() {
-    if (_currentInterval == 0 && !_isInInterval) {
-      // Start first interval
-      setState(() {
-        _isInInterval = true;
-        _currentInterval = 1;
-        _remainingTime = _intervalDuration;
-      });
-    } else if (_isInInterval) {
-      // End interval, start rest
-      setState(() {
-        _isInInterval = false;
-        _remainingTime = _restDuration;
-      });
-    } else {
-      // End rest, start next interval or finish
-      if (_currentInterval < _totalIntervals) {
-        setState(() {
-          _isInInterval = true;
-          _currentInterval++;
-          _remainingTime = _intervalDuration;
-        });
-      } else {
+  /// Single wall-clock driven ticker. Remaining time is always computed from
+  /// [_phaseEndsAt], so it doesn't drift and catches up after the app has
+  /// been in the background. Any previous ticker is cancelled first, so a
+  /// quick Stop/Start can never run two countdowns at once.
+  void _startIntervalTimer(Duration firstPhase) {
+    _cancelIntervalTimer();
+    _phaseEndsAt = DateTime.now().add(firstPhase);
+    _intervalTicker = Timer.periodic(
+        const Duration(milliseconds: 250), (_) => _onIntervalTick());
+  }
+
+  void _onIntervalTick() {
+    final endsAt = _phaseEndsAt;
+    if (!mounted || !_isTrainingActive || endsAt == null) {
+      _cancelIntervalTimer();
+      return;
+    }
+
+    final now = DateTime.now();
+    var phaseEnd = endsAt;
+    var phaseChanged = false;
+    // Advance through every phase that has already elapsed (e.g. after the
+    // app was backgrounded), chaining from the previous phase's end time.
+    while (!now.isBefore(phaseEnd)) {
+      final next = _advancePhase();
+      if (next == null) {
         // Training complete
         _stopTraining();
+        return;
       }
+      phaseEnd = phaseEnd.add(next);
+      phaseChanged = true;
+    }
+    _phaseEndsAt = phaseEnd;
+
+    final remainingMs = phaseEnd.difference(now).inMilliseconds;
+    final display = Duration(seconds: (remainingMs / 1000).ceil());
+    if (phaseChanged || display != _remainingTime) {
+      setState(() {
+        _remainingTime = display;
+      });
     }
   }
 
-  void _startHeartRateSimulation() {
-    // Fallback simulation if no real heart rate monitor is connected
-    if (!_isTrainingActive || _heartRateService.isConnected) return;
-
-    Future.delayed(const Duration(seconds: 2), () {
-      if (_isTrainingActive && mounted && !_heartRateService.isConnected) {
-        setState(() {
-          // Simulate heart rate based on training phase
-          if (_isInInterval) {
-            // During interval: aim for target heart rate
-            _currentHeartRate =
-                (_currentHeartRate + 3).clamp(70, _targetHeartRate + 5);
-          } else {
-            // During rest: gradually decrease
-            _currentHeartRate = (_currentHeartRate - 1).clamp(70, 190);
-          }
-        });
-
-        _vo2MaxService.processHeartRate(_currentHeartRate);
-        _startHeartRateSimulation();
-      }
-    });
+  /// Moves to the next phase and returns its duration, or null when the
+  /// workout is finished. Caller is responsible for calling setState.
+  Duration? _advancePhase() {
+    if (_currentInterval == 0 && !_isInInterval) {
+      // Warm-up done: start first interval
+      _isInInterval = true;
+      _currentInterval = 1;
+      return _intervalDuration;
+    } else if (_isInInterval) {
+      // End interval, start rest
+      _isInInterval = false;
+      return _restDuration;
+    } else if (_currentInterval < _totalIntervals) {
+      // End rest, start next interval
+      _isInInterval = true;
+      _currentInterval++;
+      return _intervalDuration;
+    }
+    return null;
   }
 
   @override
@@ -482,6 +505,31 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
   }
 
   Widget _buildHeartRateDisplay() {
+    // Without a strap we show no heart-rate numbers at all rather than
+    // made-up ones: VO2 max coaching depends on accurate HR.
+    if (!_heartRateService.isConnected) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            children: [
+              Icon(Icons.bluetooth_disabled, color: Colors.grey[600]),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'No heart-rate strap connected. Heart rate and zone '
+                  'coaching are unavailable; the interval timer still works.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey[700],
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
@@ -557,6 +605,9 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
   }
 
   Widget _buildRealTimeChart() {
+    if (!_heartRateService.isConnected || _sessionReadings.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return HeartRateCharts.buildRealTimeChart(
       _sessionReadings,
       context,
@@ -671,15 +722,31 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
             ),
             const SizedBox(height: 12),
             Text(
-              _currentCoaching.isNotEmpty
-                  ? _currentCoaching
-                  : 'Start your training to receive real-time coaching!',
+              !_heartRateService.isConnected
+                  ? _effortCueWithoutStrap()
+                  : _currentCoaching.isNotEmpty
+                      ? _currentCoaching
+                      : 'Start your training to receive real-time coaching!',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// Effort guidance by perceived exertion when no HR data is available.
+  String _effortCueWithoutStrap() {
+    if (_currentInterval == 0) {
+      return 'Warm up at an easy, conversational pace. '
+          '(No strap connected: coaching is by feel, not heart rate.)';
+    }
+    if (_isInInterval) {
+      return 'Hard effort: about 9/10 - you can only say a word or two. '
+          '(No strap connected: coaching is by feel, not heart rate.)';
+    }
+    return 'Recover: keep moving easily and let your breathing settle. '
+        '(No strap connected: coaching is by feel, not heart rate.)';
   }
 
   Widget _buildInstructions() {
@@ -787,7 +854,7 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
           TextButton.icon(
             onPressed: () async {
               await Navigator.pushNamed(context, '/heart-rate-monitor');
-              setState(() {}); // Refresh UI after returning
+              if (mounted) setState(() {}); // Refresh UI after returning
             },
             icon: const Icon(Icons.bluetooth),
             label: const Text('Connect Heart Rate Monitor'),
@@ -842,6 +909,15 @@ class _VO2MaxTrainingScreenState extends State<VO2MaxTrainingScreen>
 
   @override
   void dispose() {
+    _cancelIntervalTimer();
+    _coachingSubscription?.cancel();
+    _zoneSubscription?.cancel();
+    _heartRateSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    if (_isTrainingActive) {
+      _isTrainingActive = false;
+      _vo2MaxService.stopCoaching();
+    }
     _pulseController.dispose();
     super.dispose();
   }

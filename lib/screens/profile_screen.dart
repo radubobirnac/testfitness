@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/blocs/app/app_bloc.dart';
 import 'package:testfitness/blocs/app/app_event.dart';
 import 'package:testfitness/blocs/app/app_state.dart';
@@ -13,6 +14,8 @@ import 'package:testfitness/services/enhanced_tts_service.dart';
 import 'package:testfitness/services/timer_debug_reporter.dart';
 import 'package:testfitness/services/timer_debug_log_service.dart';
 import 'package:testfitness/models/user_profile.dart';
+import 'package:testfitness/screens/app_loader.dart'
+    show darkModePreferenceKey, userThemeOverride;
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/screens/performance_screen.dart';
 import 'package:testfitness/screens/ai_chat_screen.dart';
@@ -345,7 +348,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 'Age: ${_userProfile!.age} • ${Gender.getDisplayName(_userProfile!.gender)}',
                                 style: TextStyle(
                                   fontSize: 16,
-                                  color: Colors.grey[600],
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -353,7 +356,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 'Max HR: ${_userProfile!.maxHeartRate} BPM • VO2 Target: ${_userProfile!.vo2MaxTargetHeartRate} BPM',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: Colors.grey[600],
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ],
@@ -367,8 +370,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ? 'Create Profile'
                                   : 'Edit Profile'),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF26A69A),
-                                foregroundColor: Colors.white,
+                                backgroundColor:
+                                    Theme.of(context).colorScheme.primary,
+                                foregroundColor:
+                                    Theme.of(context).colorScheme.onPrimary,
                               ),
                             ),
                           ],
@@ -541,7 +546,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             Text(
               'Adjust how long to rest between sets.',
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             Center(
@@ -601,7 +606,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             Text(
               'Toggle between imperial (Lbs) and metric (Kg) weight units.',
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             Center(
@@ -642,7 +647,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             Text(
               'Play a sound when the rest timer completes.',
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             Center(
@@ -660,7 +665,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildThemeSettingCard(BuildContext context, bool isDarkMode) {
+  /// Explicitly choose light ([dark] = false) or dark mode, overriding the
+  /// system setting.
+  Future<void> _setDarkMode(bool dark, bool storedDarkMode) async {
+    userThemeOverride.value = true;
+    if (dark != storedDarkMode) {
+      // AppBloc flips and persists the stored value.
+      context.read<AppBloc>().add(const AppThemeToggled());
+    } else {
+      // The stored value already matches (the app was following the system
+      // theme); just persist it so the choice sticks across restarts.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(darkModePreferenceKey, dark);
+    }
+  }
+
+  Future<void> _followSystemTheme() async {
+    userThemeOverride.value = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(darkModePreferenceKey);
+  }
+
+  Widget _buildThemeSettingCard(BuildContext context, bool storedDarkMode) {
+    // Show the theme actually in use, which may come from the system setting.
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final followsSystem = !userThemeOverride.value;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
       child: Padding(
@@ -683,19 +712,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
                 Switch(
                   value: isDarkMode,
-                  onChanged: (value) {
-                    context.read<AppBloc>().add(const AppThemeToggled());
-                  },
+                  onChanged: (value) => _setDarkMode(value, storedDarkMode),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Text(
-              isDarkMode
-                  ? 'Using dark theme for better viewing in low light.'
-                  : 'Using light theme for bright environments.',
-              style: TextStyle(color: Colors.grey[600]),
+              followsSystem
+                  ? "Following your device's light/dark setting."
+                  : isDarkMode
+                      ? 'Using dark theme for better viewing in low light.'
+                      : 'Using light theme for bright environments.',
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
+            if (!followsSystem)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: _followSystemTheme,
+                  child: const Text('Use device setting'),
+                ),
+              ),
           ],
         ),
       ),
@@ -717,7 +755,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 8),
             Text(
               'Monitor app performance and database operations.',
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             Center(
@@ -742,7 +780,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 8),
             Text(
               'Collect notification settings, permissions, and timer state for troubleshooting.',
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             Row(
@@ -787,7 +825,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 12),
               Text(
                 'Battery optimization controls are Android-only.',
-                style: TextStyle(color: Colors.grey[600]),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ],
             const SizedBox(height: 24),
@@ -798,7 +836,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 8),
             Text(
               'Persistent background log of timer events and scheduling.',
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             Row(
@@ -866,9 +904,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                         ),
                         const SizedBox(height: 4),
-                        const Text(
+                        Text(
                           'Customize voice coaching for workouts',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
@@ -894,7 +935,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               Text(
                 _getEnthusiasmDescription(_ttsService.enthusiasmLevel),
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
 
               const SizedBox(height: 16),
@@ -1222,9 +1263,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                         ),
                         const SizedBox(height: 4),
-                        const Text(
+                        Text(
                           'Powered by Gemini 2.5 Flash Lite',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
@@ -1319,7 +1363,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Text(
               'Your key is stored only on this device and is sent only to '
               'Google\'s Gemini API.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -1415,9 +1459,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                         ),
                         const SizedBox(height: 4),
-                        const Text(
+                        Text(
                           'Configure how AI suggests workouts for you',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
@@ -1442,7 +1489,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Text(
                 _getBodyPartsDescription(
                     (preferences['defaultBodyParts'] ?? 2)),
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
 
               const SizedBox(height: 16),
@@ -1516,7 +1563,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 8),
               Text(
                 'Select body parts you want to prioritize in AI workouts',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 8),
               _buildBodyPartSelection(preferences),
@@ -1760,8 +1807,8 @@ class _ProfileEditorDialogState extends State<_ProfileEditorDialog> {
         ElevatedButton(
           onPressed: _isLoading ? null : _saveProfile,
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF26A69A),
-            foregroundColor: Colors.white,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Theme.of(context).colorScheme.onPrimary,
           ),
           child: _isLoading
               ? const SizedBox(

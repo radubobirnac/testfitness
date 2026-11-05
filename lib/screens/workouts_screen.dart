@@ -972,28 +972,13 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                   ),
             floatingActionButton: FloatingActionButton(
               onPressed: () {
-                // Create a new workout with a default name
-                final newWorkout = Workout(
-                  id: 'workout_${DateTime.now().millisecondsSinceEpoch}',
-                  name: 'New Workout',
-                  description: '',
-                  scheduledDate: DateTime.now().add(const Duration(days: 1)),
-                  isCompleted: false,
-                  sets: [],
-                );
-
-                // Create workout using BLoC
-                context.read<WorkoutBloc>().add(
-                      WorkoutCreateRequested(newWorkout),
-                    );
-
-                // Navigate to the workout editing screen
+                // Open the editor for a new (unsaved) workout dated today.
+                // It is persisted by autosave on the first completed set, so
+                // backing out does not leave an empty workout behind.
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => ExerciseDetailScreen.editWorkout(
-                      workoutId: newWorkout.id,
-                    ),
+                    builder: (context) => const ExerciseDetailScreen(),
                   ),
                 ).then((_) {
                   // Reload workouts after returning

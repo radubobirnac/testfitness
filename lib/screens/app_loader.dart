@@ -4,6 +4,7 @@ import 'dart:io'; // Import dart:io for Platform check
 // import 'dart:typed_data'; // For Int64List - removed, using foundation.dart instead
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testfitness/blocs/app/app_bloc.dart';
 import 'package:testfitness/blocs/app/app_state.dart';
 import 'package:testfitness/repositories/exercise_repository.dart';
@@ -18,6 +19,16 @@ import 'package:testfitness/services/exercise_seed_service.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/services/rest_timer_manager.dart';
 import 'package:testfitness/services/timer_debug_reporter.dart';
+
+/// SharedPreferences key AppBloc stores the dark-mode switch under. It is only
+/// written once the user flips the switch, so its absence means "no choice
+/// made yet": the app then follows the system light/dark setting.
+const String darkModePreferenceKey = 'dark_mode';
+
+/// Whether the user explicitly chose light or dark mode (true) or the app
+/// follows the system theme (false). Loaded during start-up and updated by the
+/// Dark Mode setting on the profile screen.
+final ValueNotifier<bool> userThemeOverride = ValueNotifier<bool>(false);
 
 // Global instance for notifications plugin
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -60,7 +71,8 @@ class _AppLoaderState extends State<AppLoader> {
       // Phase 2: Initialize rest timer manager
       _updateProgress(0.2, "Preparing rest timer...");
       AppLogger.info("Phase 2: Initializing rest timer manager...");
-      RestTimerManager().configureNotifications(flutterLocalNotificationsPlugin);
+      RestTimerManager()
+          .configureNotifications(flutterLocalNotificationsPlugin);
       await RestTimerManager().initialize();
       AppLogger.info("Rest timer manager initialized successfully");
 
@@ -68,6 +80,12 @@ class _AppLoaderState extends State<AppLoader> {
       _updateProgress(0.35, "Loading user preferences...");
       AppLogger.info("Phase 3: Initializing user preferences...");
       await UserPreferencesService().initialize();
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        userThemeOverride.value = prefs.containsKey(darkModePreferenceKey);
+      } catch (e) {
+        AppLogger.warning('Could not read theme preference: $e');
+      }
       AppLogger.info("User preferences initialized successfully");
 
       // Phase 4: Initialize database
@@ -335,83 +353,92 @@ class MyApp extends StatelessWidget {
           secondary: Colors.teal.shade300,
         );
 
-        // Select color scheme based on theme preference
-        final colorScheme =
-            state.isDarkMode ? darkColorScheme : lightColorScheme;
+        return ValueListenableBuilder<bool>(
+          valueListenable: userThemeOverride,
+          builder: (context, hasOverride, _) => MaterialApp(
+            title: 'StrengthWave',
+            theme: _buildTheme(lightColorScheme),
+            darkTheme: _buildTheme(darkColorScheme),
+            // Follow the system light/dark setting until the user explicitly
+            // picks one in Profile > Dark Mode.
+            themeMode: hasOverride
+                ? (state.isDarkMode ? ThemeMode.dark : ThemeMode.light)
+                : ThemeMode.system,
+            initialRoute: '/',
+            onGenerateRoute: (settings) {
+              // Define named routes
+              if (settings.name == '/') {
+                // Extract the initialIndex argument if it exists
+                final int? initialIndex = settings.arguments as int?;
+                return MaterialPageRoute(
+                  builder: (context) =>
+                      MainScreen(initialIndex: initialIndex ?? 0),
+                );
+              }
+              // haptic_test route removed - debug screen not needed in production
 
-        return MaterialApp(
-          title: 'StrengthWave',
-          theme: ThemeData(
-            useMaterial3: true,
-            colorScheme: colorScheme,
-
-            // AppBar theme - use semantic colors from the scheme
-            appBarTheme: AppBarTheme(
-              backgroundColor: colorScheme.primary,
-              foregroundColor: colorScheme.onPrimary,
-              elevation: 4,
-              iconTheme: IconThemeData(color: colorScheme.onPrimary),
-              actionsIconTheme: IconThemeData(color: colorScheme.onPrimary),
-            ),
-
-            // Button themes - use semantic colors
-            elevatedButtonTheme: ElevatedButtonThemeData(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: colorScheme.primary,
-                foregroundColor: colorScheme.onPrimary,
-              ),
-            ),
-
-            // Text buttons - no explicit foreground color, let Material decide based on context
-            textButtonTheme: TextButtonThemeData(
-              style: TextButton.styleFrom(),
-            ),
-
-            // Bottom navigation bar theme
-            bottomNavigationBarTheme: BottomNavigationBarThemeData(
-              selectedItemColor: colorScheme.primary,
-              unselectedItemColor: colorScheme.onSurfaceVariant,
-            ),
-
-            // Floating action button theme
-            floatingActionButtonTheme: FloatingActionButtonThemeData(
-              backgroundColor: colorScheme.primary,
-              foregroundColor: colorScheme.onPrimary,
-            ),
-
-            // Dialog theme for better visibility
-            dialogTheme: DialogThemeData(
-              backgroundColor: colorScheme.surface,
-              surfaceTintColor: colorScheme.surfaceTint,
-              titleTextStyle: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-              contentTextStyle: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 16,
-              ),
-            ),
+              // Return null for unknown routes
+              return null;
+            },
           ),
-          initialRoute: '/',
-          onGenerateRoute: (settings) {
-            // Define named routes
-            if (settings.name == '/') {
-              // Extract the initialIndex argument if it exists
-              final int? initialIndex = settings.arguments as int?;
-              return MaterialPageRoute(
-                builder: (context) =>
-                    MainScreen(initialIndex: initialIndex ?? 0),
-              );
-            }
-            // haptic_test route removed - debug screen not needed in production
-
-            // Return null for unknown routes
-            return null;
-          },
         );
       },
+    );
+  }
+
+  ThemeData _buildTheme(ColorScheme colorScheme) {
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: colorScheme,
+
+      // AppBar theme - use semantic colors from the scheme
+      appBarTheme: AppBarTheme(
+        backgroundColor: colorScheme.primary,
+        foregroundColor: colorScheme.onPrimary,
+        elevation: 4,
+        iconTheme: IconThemeData(color: colorScheme.onPrimary),
+        actionsIconTheme: IconThemeData(color: colorScheme.onPrimary),
+      ),
+
+      // Button themes - use semantic colors
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: colorScheme.primary,
+          foregroundColor: colorScheme.onPrimary,
+        ),
+      ),
+
+      // Text buttons - no explicit foreground color, let Material decide based on context
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(),
+      ),
+
+      // Bottom navigation bar theme
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        selectedItemColor: colorScheme.primary,
+        unselectedItemColor: colorScheme.onSurfaceVariant,
+      ),
+
+      // Floating action button theme
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: colorScheme.primary,
+        foregroundColor: colorScheme.onPrimary,
+      ),
+
+      // Dialog theme for better visibility
+      dialogTheme: DialogThemeData(
+        backgroundColor: colorScheme.surface,
+        surfaceTintColor: colorScheme.surfaceTint,
+        titleTextStyle: TextStyle(
+          color: colorScheme.onSurface,
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
+        contentTextStyle: TextStyle(
+          color: colorScheme.onSurfaceVariant,
+          fontSize: 16,
+        ),
+      ),
     );
   }
 }
