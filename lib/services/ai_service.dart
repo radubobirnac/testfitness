@@ -108,100 +108,6 @@ class AIService {
     return _model!;
   }
 
-  /// Generate a personalized workout plan
-  Future<String> generateWorkoutPlan({
-    required String fitnessLevel, // beginner, intermediate, advanced
-    required List<String> availableEquipment,
-    required int durationMinutes,
-    required String
-        primaryGoal, // strength, endurance, weight_loss, muscle_gain
-    List<Workout>? recentWorkouts,
-    List<String>? targetMuscleGroups,
-  }) async {
-    try {
-      AppLogger.info('Generating workout plan with AI');
-
-      final prompt = _buildWorkoutPlanPrompt(
-        fitnessLevel: fitnessLevel,
-        availableEquipment: availableEquipment,
-        durationMinutes: durationMinutes,
-        primaryGoal: primaryGoal,
-        recentWorkouts: recentWorkouts,
-        targetMuscleGroups: targetMuscleGroups,
-      );
-
-      final content = [Content.text(prompt)];
-      final response = await _generate(content);
-
-      if (response.text == null || response.text!.isEmpty) {
-        throw AIServiceException('AI generated empty response');
-      }
-
-      AppLogger.info('Successfully generated workout plan');
-      return response.text!;
-    } catch (error, stackTrace) {
-      AppLogger.error('Failed to generate workout plan', error, stackTrace);
-      if (error is AIServiceException) rethrow;
-      throw AIServiceException(
-          'Failed to generate workout plan: ${error.toString()}');
-    }
-  }
-
-  /// Suggest exercise alternatives
-  Future<List<String>> suggestExerciseAlternatives({
-    required String exerciseName,
-    required List<String> availableEquipment,
-    String? targetMuscleGroup,
-    String? difficultyLevel,
-  }) async {
-    try {
-      AppLogger.info('Getting exercise alternatives for: $exerciseName');
-
-      final prompt = '''
-As a fitness expert, suggest 3-5 alternative exercises for "$exerciseName".
-
-Available equipment: ${availableEquipment.join(', ')}
-${targetMuscleGroup != null ? 'Target muscle group: $targetMuscleGroup' : ''}
-${difficultyLevel != null ? 'Difficulty level: $difficultyLevel' : ''}
-
-Requirements:
-- Only use the available equipment listed
-- Target the same muscle groups as the original exercise
-- Provide exercises of similar difficulty
-- Format as a simple list, one exercise per line
-- Keep exercise names concise (max 4 words each)
-
-Example format:
-- Push-ups
-- Dumbbell Chest Press
-- Resistance Band Flyes
-''';
-
-      final content = [Content.text(prompt)];
-      final response = await _generate(content);
-
-      if (response.text == null || response.text!.isEmpty) {
-        throw AIServiceException('AI generated empty response');
-      }
-
-      // Parse the response into a list
-      final alternatives = response.text!
-          .split('\n')
-          .where((line) => line.trim().startsWith('-'))
-          .map((line) => line.trim().substring(1).trim())
-          .where((exercise) => exercise.isNotEmpty)
-          .toList();
-
-      AppLogger.info('Generated ${alternatives.length} exercise alternatives');
-      return alternatives;
-    } catch (error, stackTrace) {
-      AppLogger.error('Failed to get exercise alternatives', error, stackTrace);
-      if (error is AIServiceException) rethrow;
-      throw AIServiceException(
-          'Failed to get exercise alternatives: ${error.toString()}');
-    }
-  }
-
   /// Analyze workout progress and provide insights
   Future<String> analyzeProgress({
     required List<Workout> completedWorkouts,
@@ -226,51 +132,6 @@ Example format:
       if (error is AIServiceException) rethrow;
       throw AIServiceException(
           'Failed to analyze progress: ${error.toString()}');
-    }
-  }
-
-  /// Generate motivational message based on user's progress
-  Future<String> generateMotivationalMessage({
-    required int workoutsThisWeek,
-    required int totalWorkouts,
-    required bool recentlyCompletedWorkout,
-    String? currentGoal,
-  }) async {
-    try {
-      AppLogger.info('Generating motivational message');
-
-      final prompt = '''
-Generate a short, motivational message (max 2 sentences) for a fitness app user.
-
-User stats:
-- Workouts this week: $workoutsThisWeek
-- Total workouts: $totalWorkouts
-- Recently completed workout: $recentlyCompletedWorkout
-${currentGoal != null ? '- Current goal: $currentGoal' : ''}
-
-Requirements:
-- Keep it positive and encouraging
-- Make it personal based on their progress
-- Use emojis sparingly (max 1-2)
-- Focus on their achievements and next steps
-- Maximum 2 sentences
-''';
-
-      final content = [Content.text(prompt)];
-      final response = await _generate(content);
-
-      if (response.text == null || response.text!.isEmpty) {
-        throw AIServiceException('AI generated empty response');
-      }
-
-      AppLogger.info('Successfully generated motivational message');
-      return response.text!.trim();
-    } catch (error, stackTrace) {
-      AppLogger.error(
-          'Failed to generate motivational message', error, stackTrace);
-      if (error is AIServiceException) rethrow;
-      throw AIServiceException(
-          'Failed to generate motivational message: ${error.toString()}');
     }
   }
 
@@ -373,48 +234,6 @@ Requirements:
     }
   }
 
-  /// Generate and speak exercise coaching instructions
-  Future<String> generateVoiceCoaching({
-    required String exerciseName,
-    required String phase, // 'preparation', 'execution', 'rest', 'motivation'
-    int? currentSet,
-    int? totalSets,
-    bool speakAloud = true,
-  }) async {
-    try {
-      AppLogger.info('Generating voice coaching for: $exerciseName ($phase)');
-
-      final prompt = _buildVoiceCoachingPrompt(
-        exerciseName: exerciseName,
-        phase: phase,
-        currentSet: currentSet,
-        totalSets: totalSets,
-      );
-
-      final content = [Content.text(prompt)];
-      final response = await _generate(content);
-
-      if (response.text == null || response.text!.isEmpty) {
-        throw AIServiceException('AI generated empty response');
-      }
-
-      final coachingText = response.text!.trim();
-
-      // Speak the coaching instruction if requested
-      if (speakAloud) {
-        await speakText(coachingText);
-      }
-
-      AppLogger.info('Successfully generated voice coaching');
-      return coachingText;
-    } catch (error, stackTrace) {
-      AppLogger.error('Failed to generate voice coaching', error, stackTrace);
-      if (error is AIServiceException) rethrow;
-      throw AIServiceException(
-          'Failed to generate voice coaching: ${error.toString()}');
-    }
-  }
-
   /// Initialize TTS settings (improved FlutterTTS until Gemini TTS is available)
   Future<void> _initializeTTS() async {
     try {
@@ -467,16 +286,6 @@ Requirements:
     }
   }
 
-  /// Stop current TTS speech
-  Future<void> stopSpeaking() async {
-    try {
-      await _tts.stop();
-      AppLogger.info('Stopped TTS speech');
-    } catch (e) {
-      AppLogger.error('Failed to stop TTS', e);
-    }
-  }
-
   /// Generate quick motivational phrases for timer completion
   Future<String> generateQuickMotivation({
     required String
@@ -525,51 +334,6 @@ Requirements:
     }
   }
 
-  /// Build workout plan prompt
-  String _buildWorkoutPlanPrompt({
-    required String fitnessLevel,
-    required List<String> availableEquipment,
-    required int durationMinutes,
-    required String primaryGoal,
-    List<Workout>? recentWorkouts,
-    List<String>? targetMuscleGroups,
-  }) {
-    final buffer = StringBuffer();
-
-    buffer.writeln('Create a personalized workout plan as a fitness expert.');
-    buffer.writeln('');
-    buffer.writeln('User Profile:');
-    buffer.writeln('- Fitness Level: $fitnessLevel');
-    buffer.writeln('- Available Equipment: ${availableEquipment.join(', ')}');
-    buffer.writeln('- Workout Duration: $durationMinutes minutes');
-    buffer.writeln('- Primary Goal: $primaryGoal');
-
-    if (targetMuscleGroups != null && targetMuscleGroups.isNotEmpty) {
-      buffer
-          .writeln('- Target Muscle Groups: ${targetMuscleGroups.join(', ')}');
-    }
-
-    if (recentWorkouts != null && recentWorkouts.isNotEmpty) {
-      buffer.writeln('');
-      buffer.writeln('Recent Workouts (for variety):');
-      for (final workout in recentWorkouts.take(3)) {
-        buffer.writeln('- ${workout.name} (${workout.sets.length} exercises)');
-      }
-    }
-
-    buffer.writeln('');
-    buffer.writeln('Requirements:');
-    buffer.writeln('- Only use the available equipment listed');
-    buffer.writeln('- Match the specified fitness level');
-    buffer.writeln('- Design for the exact duration specified');
-    buffer.writeln('- Include warm-up and cool-down');
-    buffer.writeln('- Provide sets, reps, and rest periods');
-    buffer.writeln('- Format as a clear, structured workout plan');
-    buffer.writeln('- Include brief exercise descriptions for proper form');
-
-    return buffer.toString();
-  }
-
   /// Build progress analysis prompt
   String _buildProgressAnalysisPrompt(
       List<Workout> workouts, String timeframe) {
@@ -604,58 +368,6 @@ Requirements:
     buffer.writeln('');
     buffer.writeln(
         'Keep the analysis positive, actionable, and under 200 words.');
-
-    return buffer.toString();
-  }
-
-  /// Build voice coaching prompt
-  String _buildVoiceCoachingPrompt({
-    required String exerciseName,
-    required String phase,
-    int? currentSet,
-    int? totalSets,
-  }) {
-    final buffer = StringBuffer();
-
-    buffer.writeln('You are an AI fitness coach providing voice guidance.');
-    buffer.writeln('');
-    buffer.writeln('Exercise: $exerciseName');
-    buffer.writeln('Phase: $phase');
-
-    if (currentSet != null && totalSets != null) {
-      buffer.writeln('Progress: Set $currentSet of $totalSets');
-    }
-
-    buffer.writeln('');
-
-    switch (phase) {
-      case 'preparation':
-        buffer.writeln('Provide brief setup instructions for proper form.');
-        buffer.writeln('Keep it under 15 words, focus on key form cues.');
-        break;
-      case 'execution':
-        buffer.writeln('Give encouraging coaching during the exercise.');
-        buffer.writeln('Focus on form, breathing, and motivation.');
-        buffer.writeln('Keep it under 20 words, energetic tone.');
-        break;
-      case 'rest':
-        buffer.writeln('Provide rest period guidance and encouragement.');
-        buffer.writeln('Mention recovery and preparation for next set.');
-        buffer.writeln('Keep it under 15 words, calm but motivating.');
-        break;
-      case 'motivation':
-        buffer.writeln('Give a motivational boost to push through fatigue.');
-        buffer.writeln('High energy, encouraging, under 10 words.');
-        break;
-    }
-
-    buffer.writeln('');
-    buffer.writeln('Requirements:');
-    buffer.writeln('- Use simple, clear language');
-    buffer.writeln('- Sound like a supportive personal trainer');
-    buffer.writeln('- No technical jargon');
-    buffer.writeln('- Appropriate for text-to-speech');
-    buffer.writeln('- Return only the coaching phrase, no extra text');
 
     return buffer.toString();
   }

@@ -124,10 +124,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // describes), without AI-only questions or loading dialogs.
     if (_usingCoach) {
       final coachWorkout = await _buildCoachWorkout(allWorkouts);
-      if (!mounted) return;
-      // ignore: use_build_context_synchronously
+      if (!context.mounted) return;
       context.read<WorkoutBloc>().add(WorkoutCreateRequested(coachWorkout));
-      // ignore: use_build_context_synchronously
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -139,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final preference = await _showWorkoutPreferenceDialog(context);
-    if (!mounted || preference == null) return;
+    if (!context.mounted || preference == null) return;
 
     // Show loading indicator
     showDialog(
@@ -191,17 +189,14 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       // Check if widget is still mounted before using context
-      if (!mounted) return;
+      if (!context.mounted) return;
 
-      // ignore: use_build_context_synchronously
       // Close loading dialog
       Navigator.of(context).pop();
 
-      // ignore: use_build_context_synchronously
       // Create workout using BLoC
       context.read<WorkoutBloc>().add(WorkoutCreateRequested(aiWorkout));
 
-      // ignore: use_build_context_synchronously
       // Navigate to workout editing screen
       Navigator.push(
         context,
@@ -211,7 +206,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ).then((_) => _refreshWorkouts());
 
-      // ignore: use_build_context_synchronously
       // Show success message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -222,9 +216,8 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } catch (error) {
       // Check if widget is still mounted before using context
-      if (!mounted) return;
+      if (!context.mounted) return;
 
-      // ignore: use_build_context_synchronously
       // Close loading dialog if still open
       if (Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
@@ -234,10 +227,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       // Fallback: offline coach builds the workout from the user's history.
       final coachWorkout = await _buildCoachWorkout(recentWorkouts);
-      if (!mounted) return;
-      // ignore: use_build_context_synchronously
+      if (!context.mounted) return;
       context.read<WorkoutBloc>().add(WorkoutCreateRequested(coachWorkout));
-      // ignore: use_build_context_synchronously
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -245,7 +236,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ExerciseDetailScreen.editWorkout(workoutId: coachWorkout.id),
         ),
       ).then((_) => _refreshWorkouts());
-      // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(

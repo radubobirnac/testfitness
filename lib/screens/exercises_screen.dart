@@ -278,7 +278,7 @@ class _ExercisesScreenState extends State<ExercisesScreen> {
                   borderRadius: BorderRadius.all(Radius.circular(25.0)),
                 ),
               ),
-              value: state.selectedCategory,
+              initialValue: state.selectedCategory,
               items: state.categories.map((category) {
                 return DropdownMenuItem(
                   value: category,
@@ -301,7 +301,7 @@ class _ExercisesScreenState extends State<ExercisesScreen> {
                   borderRadius: BorderRadius.all(Radius.circular(25.0)),
                 ),
               ),
-              value: state.selectedBodyPart,
+              initialValue: state.selectedBodyPart,
               items: state.bodyParts.map((bodyPart) {
                 return DropdownMenuItem(
                   value: bodyPart,

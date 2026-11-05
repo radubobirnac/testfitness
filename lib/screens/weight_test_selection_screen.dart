@@ -113,31 +113,33 @@ class _WeightTestSelectionScreenState extends State<WeightTestSelectionScreen> {
             // Exercise List
             Expanded(
               child: Card(
-                child: ListView.builder(
-                  itemCount: _filteredExercises.length,
-                  itemBuilder: (context, index) {
-                    final exercise = _filteredExercises[index];
-                    final isSelected = _selectedExercise == exercise;
+                child: RadioGroup<String>(
+                  groupValue: _selectedExercise,
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedExercise = value ?? '';
+                    });
+                  },
+                  child: ListView.builder(
+                    itemCount: _filteredExercises.length,
+                    itemBuilder: (context, index) {
+                      final exercise = _filteredExercises[index];
+                      final isSelected = _selectedExercise == exercise;
 
-                    return ListTile(
-                      title: Text(exercise),
-                      leading: Radio<String>(
-                        value: exercise,
-                        groupValue: _selectedExercise,
-                        onChanged: (value) {
+                      return ListTile(
+                        title: Text(exercise),
+                        leading: Radio<String>(
+                          value: exercise,
+                        ),
+                        selected: isSelected,
+                        onTap: () {
                           setState(() {
-                            _selectedExercise = value ?? '';
+                            _selectedExercise = exercise;
                           });
                         },
-                      ),
-                      selected: isSelected,
-                      onTap: () {
-                        setState(() {
-                          _selectedExercise = exercise;
-                        });
-                      },
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
             ),

@@ -53,14 +53,6 @@ void main() {
     });
 
     test('Platform-specific storage mechanism reports correctly', () async {
-      if (isWeb) {
-        // For web, we should be using localStorage mechanism
-        print('Running on Web platform with localStorage persistence');
-      } else {
-        // For mobile, we should be using SQLite
-        print('Running on Mobile platform with SQLite persistence');
-      }
-
       // This test is mainly for reporting purposes
       // but we'll also verify basic functionality
       final exercise = createTestExercise();
