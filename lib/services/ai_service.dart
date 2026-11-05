@@ -7,6 +7,20 @@ import 'package:testfitness/services/progression_coach.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/offline_indicator.dart';
 
+/// A muscle split the user picked ("Back & Biceps": main back, secondary
+/// biceps), passed to the AI so it builds that workout.
+class AiSplitRequest {
+  final String name;
+  final List<String> main;
+  final List<String> secondary;
+
+  const AiSplitRequest({
+    required this.name,
+    required this.main,
+    this.secondary = const [],
+  });
+}
+
 /// AI Service powered by Google Gemini 2.5 Flash Lite
 ///
 /// **DISCLAIMER: AI features require an active internet connection**
@@ -170,6 +184,7 @@ class AIService {
     required String focus,
     required String context,
     WorkoutPreferences? preferences,
+    AiSplitRequest? split,
   }) async {
     try {
       AppLogger.info('Generating focused AI workout');
@@ -178,6 +193,7 @@ class AIService {
         focus: focus,
         context: context,
         preferences: preferences,
+        split: split,
       );
 
       final content = [Content.text(prompt)];
@@ -396,16 +412,32 @@ Requirements:
     return buffer.toString();
   }
 
+  /// "Build a Back & Biceps workout: main back, secondary biceps. ..."
+  static String splitInstruction(AiSplitRequest split) {
+    String join(List<String> labels) =>
+        labels.map((l) => l.toLowerCase()).join(', ');
+    final buffer = StringBuffer('Build a ${split.name} workout: ');
+    buffer.write('main ${join(split.main)}');
+    if (split.secondary.isNotEmpty) {
+      buffer.write(', secondary ${join(split.secondary)}');
+    }
+    buffer.write('. Most exercises should train the main muscles; '
+        'finish with exercises for the secondary muscles.');
+    return buffer.toString();
+  }
+
   String _buildAiWorkoutPrompt({
     required String focus,
     required String context,
     WorkoutPreferences? preferences,
+    AiSplitRequest? split,
   }) {
     final buffer = StringBuffer();
 
     buffer.writeln('You are a strength coach building an AI workout.');
     buffer.writeln('');
     buffer.writeln('Workout focus: $focus.');
+    if (split != null) buffer.writeln(splitInstruction(split));
     buffer.writeln('');
     _writePreferences(buffer, preferences,
         note: 'The chosen workout focus above decides the muscle groups; '

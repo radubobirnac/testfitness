@@ -21,6 +21,7 @@ import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_loading_card.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
+import 'package:testfitness/widgets/workout_split_picker.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -85,6 +86,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildUpcomingWorkoutsSection(state.workouts),
+                        const SizedBox(height: 12),
+                        _buildChooseWorkoutCard(state.workouts),
                         const SizedBox(height: 24),
                         _buildRecentWorkoutsSection(state.workouts),
                         const SizedBox(height: 24),
@@ -439,6 +442,56 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
       ],
+    );
+  }
+
+  /// Prominent entry to the muscle-split picker ("Back & Biceps", "Legs"...).
+  Widget _buildChooseWorkoutCard(List<Workout> workouts) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      key: const Key('home_choose_workout'),
+      margin: EdgeInsets.zero,
+      color: cs.secondaryContainer,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () async {
+          HapticFeedback.selectionClick();
+          await openWorkoutSplitPicker(context, workouts);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(Icons.accessibility_new,
+                  size: 32, color: cs.onSecondaryContainer),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Choose your workout',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: cs.onSecondaryContainer,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Pick muscles — back & biceps, legs, chest…',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: cs.onSecondaryContainer),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: cs.onSecondaryContainer),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

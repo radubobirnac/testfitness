@@ -20,6 +20,7 @@ import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
 import 'package:testfitness/widgets/workout_card_skeleton.dart';
+import 'package:testfitness/widgets/workout_split_picker.dart';
 
 class WorkoutsScreen extends StatefulWidget {
   const WorkoutsScreen({super.key});
@@ -526,6 +527,16 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                             ),
                           );
 
+                          final splitButton = OutlinedButton.icon(
+                            key: const Key('workouts_choose_split'),
+                            style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(0, 48)),
+                            onPressed: () => openWorkoutSplitPicker(
+                                context, state.workouts),
+                            icon: const Icon(Icons.accessibility_new),
+                            label: const Text('Choose by muscle group'),
+                          );
+
                           if (isNarrow) {
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -533,15 +544,24 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                                 nextButton,
                                 const SizedBox(height: 12),
                                 aiButton,
+                                const SizedBox(height: 8),
+                                splitButton,
                               ],
                             );
                           }
 
-                          return Row(
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Expanded(child: nextButton),
-                              const SizedBox(width: 12),
-                              Expanded(child: aiButton),
+                              Row(
+                                children: [
+                                  Expanded(child: nextButton),
+                                  const SizedBox(width: 12),
+                                  Expanded(child: aiButton),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              splitButton,
                             ],
                           );
                         },
