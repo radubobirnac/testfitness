@@ -1,8 +1,30 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:testfitness/utils/app_logger.dart';
+
+/// High-level state of the heart rate monitor link, for UI display.
+enum HeartRateConnectionStatus {
+  /// No device connected (never connected, user disconnected, or reconnect
+  /// attempts exhausted).
+  disconnected,
+
+  /// A user-initiated connection attempt is in progress.
+  connecting,
+
+  /// Connected and receiving heart rate notifications.
+  connected,
+
+  /// Still connected at the BLE level but no heart rate notification has been
+  /// received for [HeartRateService.staleTimeout]. The last BPM is not live.
+  stale,
+
+  /// The link dropped unexpectedly and the service is trying to reconnect to
+  /// the same device.
+  reconnecting,
+}
 
 /// Service for managing heart rate monitor connections and data
 class HeartRateService {
@@ -10,29 +32,56 @@ class HeartRateService {
   factory HeartRateService() => _instance;
   HeartRateService._internal();
 
+  /// No HR notification for this long => reading is considered stale.
+  static const Duration staleTimeout = Duration(seconds: 10);
+
+  /// Bounded auto-reconnect after an unexpected disconnect.
+  static const int maxReconnectAttempts = 3;
+
   // Bluetooth state
   BluetoothDevice? _connectedDevice;
-  BluetoothCharacteristic? _heartRateCharacteristic;
   StreamSubscription<List<int>>? _heartRateSubscription;
+  StreamSubscription<BluetoothConnectionState>? _deviceStateSubscription;
+  StreamSubscription<BluetoothAdapterState>? _adapterStateSubscription;
+  StreamSubscription<List<ScanResult>>? _scanResultsSubscription;
+  Timer? _scanTimeoutTimer;
+  Timer? _staleTimer;
+
+  /// Incremented whenever a connection is torn down on purpose, so that an
+  /// in-flight auto-reconnect loop knows to abort.
+  int _connectionGeneration = 0;
+  bool _isReconnecting = false;
 
   // Heart rate data
   final StreamController<int> _heartRateController =
       StreamController<int>.broadcast();
+  final StreamController<int?> _liveHeartRateController =
+      StreamController<int?>.broadcast();
   final StreamController<bool> _connectionController =
       StreamController<bool>.broadcast();
   final StreamController<List<BluetoothDevice>> _devicesController =
       StreamController<List<BluetoothDevice>>.broadcast();
+  final StreamController<HeartRateConnectionStatus> _statusController =
+      StreamController<HeartRateConnectionStatus>.broadcast();
+  final ValueNotifier<HeartRateConnectionStatus> _statusNotifier =
+      ValueNotifier<HeartRateConnectionStatus>(
+          HeartRateConnectionStatus.disconnected);
 
   // Data tracking
   final List<HeartRateReading> _readings = [];
   int _currentHeartRate = 0;
+  DateTime? _lastHeartRateAt;
+  DateTime? _connectedAt;
   bool _isConnected = false;
   bool _isScanning = false;
 
-  // Debug logging
+  // Debug logging (debug builds only)
   final List<String> _debugLogs = [];
   final StreamController<List<String>> _debugController =
       StreamController<List<String>>.broadcast();
+  final Set<String> _loggedScanDeviceIds = {};
+  int _lastLoggedScanCount = -1;
+  int _lastLoggedHrDeviceCount = -1;
 
   // Heart Rate Service UUID (standard Bluetooth SIG)
   static const String heartRateServiceUuid =
@@ -45,21 +94,66 @@ class HeartRateService {
   static const String heartRateMeasurementShortUuid = "2a37";
 
   // Streams
+  /// Every valid BPM notification (unchanged legacy API; never emits null).
   Stream<int> get heartRateStream => _heartRateController.stream;
+
+  /// Like [heartRateStream] but emits `null` when the reading becomes stale or
+  /// the device disconnects, so UIs can blank the number instead of showing an
+  /// old value as live.
+  Stream<int?> get liveHeartRateStream => _liveHeartRateController.stream;
+
+  /// `true` when connected, `false` on any disconnect (including unexpected
+  /// drops; a successful auto-reconnect emits `true` again).
   Stream<bool> get connectionStream => _connectionController.stream;
   Stream<List<BluetoothDevice>> get devicesStream => _devicesController.stream;
   Stream<List<String>> get debugStream => _debugController.stream;
 
+  /// Detailed link status (connected / stale / reconnecting / ...).
+  Stream<HeartRateConnectionStatus> get connectionStatusStream =>
+      _statusController.stream;
+
+  /// Same as [connectionStatusStream] but synchronously readable; usable with
+  /// `ValueListenableBuilder`.
+  ValueListenable<HeartRateConnectionStatus> get connectionStatus =>
+      _statusNotifier;
+
   // Getters
   int get currentHeartRate => _currentHeartRate;
+
+  /// Current BPM, or `null` if not connected or the reading is stale.
+  int? get liveHeartRate =>
+      _statusNotifier.value == HeartRateConnectionStatus.connected &&
+              _lastHeartRateAt != null
+          ? _currentHeartRate
+          : null;
+  bool get isHeartRateStale =>
+      _statusNotifier.value == HeartRateConnectionStatus.stale;
+  DateTime? get lastHeartRateAt => _lastHeartRateAt;
   bool get isConnected => _isConnected;
+  bool get isReconnecting => _isReconnecting;
   bool get isScanning => _isScanning;
   String get connectedDeviceName => _connectedDevice?.platformName ?? '';
   List<HeartRateReading> get readings => List.unmodifiable(_readings);
   List<String> get debugLogs => List.unmodifiable(_debugLogs);
 
-  /// Add debug log entry
+  void _setStatus(HeartRateConnectionStatus status) {
+    if (_statusNotifier.value == status) return;
+    _statusNotifier.value = status;
+    if (!_statusController.isClosed) _statusController.add(status);
+    _addDebugLog('Status: ${status.name}');
+  }
+
+  void _emitConnection(bool connected) {
+    if (!_connectionController.isClosed) _connectionController.add(connected);
+  }
+
+  void _emitLive(int? bpm) {
+    if (!_liveHeartRateController.isClosed) _liveHeartRateController.add(bpm);
+  }
+
+  /// Add debug log entry. No-op in release builds.
   void _addDebugLog(String message) {
+    if (!kDebugMode) return;
     String timestamp = DateTime.now().toString().substring(11, 19);
     String logEntry = '[$timestamp] $message';
     _debugLogs.add(logEntry);
@@ -69,56 +163,67 @@ class HeartRateService {
       _debugLogs.removeAt(0);
     }
 
-    // Notify listeners
-    _debugController.add(List.from(_debugLogs));
-
-    // Also log to AppLogger
-    AppLogger.info(message);
+    if (!_debugController.isClosed) {
+      _debugController.add(List.from(_debugLogs));
+    }
+    AppLogger.debug('[HR] $message');
   }
 
   /// Clear debug logs
   void clearDebugLogs() {
     _debugLogs.clear();
-    _debugController.add([]);
+    if (!_debugController.isClosed) _debugController.add([]);
   }
 
   /// Helper method to compare UUIDs (handles both short and full formats)
   bool _isUuidMatch(
       String deviceUuid, String targetFullUuid, String targetShortUuid) {
     String deviceUuidLower = deviceUuid.toLowerCase();
-    bool fullMatch = deviceUuidLower == targetFullUuid.toLowerCase();
-    bool shortMatch = deviceUuidLower == targetShortUuid.toLowerCase();
-
-    _addDebugLog(
-        '🔍 UUID Comparison: "$deviceUuid" vs Full:"$targetFullUuid" Short:"$targetShortUuid"');
-    _addDebugLog('   📊 Full match: $fullMatch, Short match: $shortMatch');
-
-    return fullMatch || shortMatch;
+    return deviceUuidLower == targetFullUuid.toLowerCase() ||
+        deviceUuidLower == targetShortUuid.toLowerCase();
   }
 
-  /// Initialize the heart rate service
+  /// Initialize the heart rate service. Safe to call repeatedly (each screen
+  /// calls it); the adapter-state listener is only kept once.
   Future<void> initialize() async {
     try {
-      AppLogger.info('Initializing Heart Rate Service');
-
-      // Check if Bluetooth is supported
       if (await FlutterBluePlus.isSupported == false) {
         AppLogger.error('Bluetooth not supported on this device');
         return;
       }
 
-      // Listen to Bluetooth adapter state
-      FlutterBluePlus.adapterState.listen((BluetoothAdapterState state) {
-        AppLogger.info('Bluetooth adapter state: $state');
-        if (state != BluetoothAdapterState.on && _isConnected) {
+      if (_adapterStateSubscription != null) return;
+
+      AppLogger.info('Initializing Heart Rate Service');
+      _adapterStateSubscription =
+          FlutterBluePlus.adapterState.listen((BluetoothAdapterState state) {
+        _addDebugLog('Bluetooth adapter state: $state');
+        if (state != BluetoothAdapterState.on &&
+            (_isConnected || _isReconnecting)) {
+          // Bluetooth turned off: reconnecting cannot succeed.
           disconnect();
         }
       });
-
-      AppLogger.info('Heart Rate Service initialized successfully');
     } catch (error, stackTrace) {
       AppLogger.error(
           'Failed to initialize Heart Rate Service', error, stackTrace);
+    }
+  }
+
+  /// Waits for the adapter to leave the transient `unknown`/`turningOn`
+  /// states. On iOS the first FlutterBluePlus call creates the
+  /// CBCentralManager, which is what shows the system Bluetooth prompt; the
+  /// state then becomes `on`, `off` or `unauthorized`.
+  Future<BluetoothAdapterState> _settledAdapterState() async {
+    try {
+      return await FlutterBluePlus.adapterState
+          .where((s) =>
+              s != BluetoothAdapterState.unknown &&
+              s != BluetoothAdapterState.turningOn)
+          .first
+          .timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      return FlutterBluePlus.adapterStateNow;
     }
   }
 
@@ -148,11 +253,18 @@ class HeartRateService {
           AppLogger.info('Using legacy Android Bluetooth permissions');
         }
       } else if (Platform.isIOS) {
-        // iOS BLE flow only needs Bluetooth authorization.
-        permissionsToRequest.add(Permission.bluetooth);
-        AppLogger.info('Using iOS Bluetooth permissions');
+        // On iOS, CoreBluetooth itself shows the system prompt (driven by
+        // NSBluetoothAlwaysUsageDescription) when FlutterBluePlus creates its
+        // CBCentralManager. Authorization is then reported through
+        // adapterState (== unauthorized when denied). This does not depend on
+        // permission_handler's PERMISSION_BLUETOOTH Podfile macro, which if
+        // missing makes Permission.bluetooth always report permanentlyDenied.
+        final state = await _settledAdapterState();
+        AppLogger.info('iOS Bluetooth adapter state after prompt: $state');
+        return state != BluetoothAdapterState.unauthorized;
       } else {
-        AppLogger.info('No runtime Bluetooth permissions required on this platform');
+        AppLogger.info(
+            'No runtime Bluetooth permissions required on this platform');
         return true;
       }
 
@@ -179,7 +291,8 @@ class HeartRateService {
       if (allGranted) {
         AppLogger.info('All Bluetooth permissions granted');
       } else {
-        AppLogger.warning('Denied permissions: ${deniedPermissions.join(', ')}');
+        AppLogger.warning(
+            'Denied permissions: ${deniedPermissions.join(', ')}');
         if (permanentlyDenied.isNotEmpty) {
           AppLogger.warning(
               'Permanently denied permissions: ${permanentlyDenied.join(', ')}');
@@ -190,6 +303,65 @@ class HeartRateService {
     } catch (error, stackTrace) {
       AppLogger.error('Failed to request permissions', error, stackTrace);
       return false;
+    }
+  }
+
+  static bool _looksLikeHeartRateMonitor(ScanResult result) {
+    final name = result.device.platformName.toLowerCase();
+    final serviceUuids = result.advertisementData.serviceUuids
+        .map((uuid) => uuid.toString().toLowerCase())
+        .toList();
+
+    final nameMatch = name.contains('magene') ||
+        name.contains('h003') ||
+        name.contains('h64') ||
+        name.contains('polar') ||
+        name.contains('garmin') ||
+        name.contains('heart') ||
+        name.contains('hrm') ||
+        name.contains('hr') ||
+        name.contains('chest') ||
+        name.contains('monitor') ||
+        name.contains('25055');
+
+    final serviceMatch = serviceUuids.any((uuid) =>
+        uuid.contains('180d') || // Heart Rate Service
+        uuid.contains('2a37')); // Heart Rate Measurement
+
+    return nameMatch || serviceMatch;
+  }
+
+  void _onScanResults(List<ScanResult> results) {
+    if (results.length != _lastLoggedScanCount) {
+      _lastLoggedScanCount = results.length;
+      _addDebugLog('Scan: ${results.length} devices seen');
+    }
+
+    // Log each device once per scan instead of on every advertisement.
+    for (final result in results) {
+      final id = result.device.remoteId.toString();
+      if (!_loggedScanDeviceIds.add(id)) continue;
+      final name = result.device.platformName.isNotEmpty
+          ? result.device.platformName
+          : 'Unknown Device';
+      final services = result.advertisementData.serviceUuids;
+      _addDebugLog('Found "$name" ($id) RSSI ${result.rssi} dBm, '
+          'services: ${services.isEmpty ? "none" : services.join(", ")}'
+          '${_looksLikeHeartRateMonitor(result) ? " [HR candidate]" : ""}');
+    }
+
+    final heartRateDevices = results
+        .where(_looksLikeHeartRateMonitor)
+        .map((result) => result.device)
+        .toList();
+
+    if (heartRateDevices.length != _lastLoggedHrDeviceCount) {
+      _lastLoggedHrDeviceCount = heartRateDevices.length;
+      _addDebugLog('${heartRateDevices.length} potential HR devices');
+    }
+
+    if (heartRateDevices.isNotEmpty && !_devicesController.isClosed) {
+      _devicesController.add(heartRateDevices);
     }
   }
 
@@ -207,128 +379,48 @@ class HeartRateService {
       }
 
       // Check if Bluetooth is on
-      if (await FlutterBluePlus.adapterState.first !=
-          BluetoothAdapterState.on) {
+      if (await _settledAdapterState() != BluetoothAdapterState.on) {
         throw Exception('Bluetooth is not enabled');
       }
 
       _isScanning = true;
-      _addDebugLog('🔍 Starting scan for heart rate monitors');
-      _addDebugLog(
-          '📱 Note: If device was connected to another app, it may not appear until that connection is closed');
+      _loggedScanDeviceIds.clear();
+      _lastLoggedScanCount = -1;
+      _lastLoggedHrDeviceCount = -1;
+      _addDebugLog('Starting scan for heart rate monitors');
 
       // Clear previous devices
-      _devicesController.add([]);
+      if (!_devicesController.isClosed) _devicesController.add([]);
 
-      // Also check for already connected devices
-      List<BluetoothDevice> connectedDevices = FlutterBluePlus.connectedDevices;
-      if (connectedDevices.isNotEmpty) {
+      for (final device in FlutterBluePlus.connectedDevices) {
         _addDebugLog(
-            '🔗 Found ${connectedDevices.length} already connected devices:');
-        for (var device in connectedDevices) {
-          _addDebugLog(
-              '   📱 Connected: ${device.platformName} (${device.remoteId})');
-        }
+            'Already connected: ${device.platformName} (${device.remoteId})');
       }
 
-      // Start scanning WITHOUT service filter to catch all devices
-      // Many heart rate monitors don't advertise the standard HR service
-      await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 15), // Standard timeout
+      // Subscribe before starting the scan (cancel any previous listener).
+      // onScanResults does not replay results from a previous scan.
+      await _scanResultsSubscription?.cancel();
+      _scanResultsSubscription = FlutterBluePlus.onScanResults.listen(
+        _onScanResults,
+        onError: (Object e) => _addDebugLog('Scan error: $e'),
       );
 
-      // Listen for scan results
-      FlutterBluePlus.scanResults.listen((results) {
-        _addDebugLog('📡 Scan found ${results.length} total devices');
-
-        // Log all discovered devices for debugging
-        for (var result in results) {
-          String deviceName = result.device.platformName.isNotEmpty
-              ? result.device.platformName
-              : 'Unknown Device';
-          String deviceId = result.device.remoteId.toString();
-          List<String> serviceUuids = result.advertisementData.serviceUuids
-              .map((uuid) => uuid.toString())
-              .toList();
-
-          _addDebugLog('📱 Found device: "$deviceName" (ID: $deviceId)');
-          _addDebugLog('📶 RSSI: ${result.rssi} dBm');
-          _addDebugLog(
-              '🔧 Services: ${serviceUuids.isEmpty ? "None advertised" : serviceUuids.join(", ")}');
-          _addDebugLog(
-              '🔗 Connectable: ${result.advertisementData.connectable}');
-
-          // Check if device name contains heart rate monitor keywords
-          String nameLower = deviceName.toLowerCase();
-          bool isHeartRateDevice = nameLower.contains('magene') ||
-              nameLower.contains('h003') ||
-              nameLower.contains('h64') ||
-              nameLower.contains('polar') ||
-              nameLower.contains('garmin') ||
-              nameLower.contains('heart') ||
-              nameLower.contains('hrm') ||
-              nameLower.contains('hr') ||
-              nameLower.contains('25055') ||
-              serviceUuids.any((uuid) => uuid.toLowerCase().contains('180d'));
-
-          if (isHeartRateDevice) {
-            _addDebugLog('❤️ *** POTENTIAL HEART RATE MONITOR DETECTED ***');
-          }
-        }
-
-        // Filter for heart rate devices
-        List<BluetoothDevice> heartRateDevices = results
-            .where((result) {
-              String name = result.device.platformName.toLowerCase();
-              List<String> serviceUuids = result.advertisementData.serviceUuids
-                  .map((uuid) => uuid.toString().toLowerCase())
-                  .toList();
-
-              // Check by device name
-              bool nameMatch = name.contains('magene') ||
-                  name.contains('h003') ||
-                  name.contains('h64') ||
-                  name.contains('polar') ||
-                  name.contains('garmin') ||
-                  name.contains('heart') ||
-                  name.contains('hrm') ||
-                  name.contains('hr') ||
-                  name.contains('chest') ||
-                  name.contains('monitor') ||
-                  name.contains('25055');
-
-              // Check by service UUID (heart rate service)
-              bool serviceMatch = serviceUuids.any((uuid) =>
-                      uuid.contains('180d') || // Heart Rate Service
-                      uuid.contains('2a37') // Heart Rate Measurement
-                  );
-
-              return nameMatch || serviceMatch;
-            })
-            .map((result) => result.device)
-            .toList();
-
-        if (heartRateDevices.isNotEmpty) {
-          _addDebugLog(
-              '✅ Found ${heartRateDevices.length} potential heart rate devices:');
-          for (var device in heartRateDevices) {
-            _addDebugLog(
-                '❤️ ${device.platformName.isNotEmpty ? device.platformName : "Unknown"} (${device.remoteId})');
-          }
-          _devicesController.add(heartRateDevices);
-        } else {
-          _addDebugLog('❌ No heart rate devices found in this scan cycle');
-        }
-      });
+      // Scan WITHOUT service filter: many HR straps don't advertise 0x180D.
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 15),
+      );
 
       // Auto-stop scanning after timeout
-      Timer(const Duration(seconds: 10), () {
+      _scanTimeoutTimer?.cancel();
+      _scanTimeoutTimer = Timer(const Duration(seconds: 10), () {
         if (_isScanning) {
           stopScanning();
         }
       });
     } catch (error, stackTrace) {
       _isScanning = false;
+      await _scanResultsSubscription?.cancel();
+      _scanResultsSubscription = null;
       AppLogger.error('Failed to start scanning', error, stackTrace);
       rethrow;
     }
@@ -336,6 +428,10 @@ class HeartRateService {
 
   /// Stop scanning for devices
   Future<void> stopScanning() async {
+    _scanTimeoutTimer?.cancel();
+    _scanTimeoutTimer = null;
+    await _scanResultsSubscription?.cancel();
+    _scanResultsSubscription = null;
     try {
       if (!_isScanning) return;
 
@@ -350,153 +446,200 @@ class HeartRateService {
   /// Connect to a heart rate monitor
   Future<bool> connectToDevice(BluetoothDevice device) async {
     try {
-      _addDebugLog('🚀 === CONNECTION ATTEMPT STARTED ===');
-      _addDebugLog(
-          '🔗 Attempting to connect to ${device.platformName} (${device.remoteId})');
-      _addDebugLog(
-          '📋 Device details: Name="${device.platformName}", ID=${device.remoteId}');
+      _addDebugLog('Connecting to ${device.platformName} (${device.remoteId})');
 
-      // Check device state before connecting
-      final deviceState = await device.connectionState.first;
-      _addDebugLog('📱 Current device state: $deviceState');
-
-      // Disconnect from current device if connected
-      if (_isConnected) {
-        _addDebugLog('🔌 Disconnecting from existing device first');
+      // Disconnect from current device (or abort a pending reconnect)
+      if (_isConnected || _isReconnecting || _connectedDevice != null) {
+        _addDebugLog('Disconnecting from existing device first');
         await disconnect();
-        await Future.delayed(const Duration(milliseconds: 500)); // Brief pause
+        await Future.delayed(const Duration(milliseconds: 500));
       }
 
-      // Check Bluetooth adapter state
-      final adapterState = await FlutterBluePlus.adapterState.first;
-      _addDebugLog('📡 Bluetooth adapter state: $adapterState');
-
+      final adapterState = await _settledAdapterState();
       if (adapterState != BluetoothAdapterState.on) {
         throw Exception('Bluetooth adapter is not on: $adapterState');
       }
 
-      _addDebugLog('⏳ Connecting to device (timeout: 15 seconds)...');
-      // Connect to the device with longer timeout
-      await device.connect(timeout: const Duration(seconds: 15));
-      _connectedDevice = device;
-      _addDebugLog('✅ Successfully connected to device');
+      _setStatus(HeartRateConnectionStatus.connecting);
+      final generation = _connectionGeneration;
 
-      // Verify connection state
-      final newState = await device.connectionState.first;
-      _addDebugLog('🔍 Post-connection state: $newState');
+      await _establishConnection(device, timeout: const Duration(seconds: 15));
 
-      // Discover services
-      _addDebugLog('🔍 Discovering services...');
-      List<BluetoothService> services = await device.discoverServices();
-      _addDebugLog('📋 Discovered ${services.length} services');
-
-      // Log all services for debugging
-      for (BluetoothService service in services) {
-        _addDebugLog('   🔧 Service: ${service.uuid}');
-        // Also log characteristics for each service
-        for (BluetoothCharacteristic characteristic
-            in service.characteristics) {
-          _addDebugLog('      📝 Characteristic: ${characteristic.uuid}');
-        }
+      if (generation != _connectionGeneration) {
+        // disconnect() was called while we were connecting.
+        throw Exception('Connection cancelled');
       }
 
-      // Find heart rate service
-      _addDebugLog(
-          '🔍 Looking for HR service. Expected: Full="$heartRateServiceUuid" Short="$heartRateServiceShortUuid"');
-      BluetoothService? heartRateService;
-      for (BluetoothService service in services) {
-        if (_isUuidMatch(service.uuid.toString(), heartRateServiceUuid,
-            heartRateServiceShortUuid)) {
-          heartRateService = service;
-          _addDebugLog('❤️ Found Heart Rate Service: ${service.uuid}');
-          break;
-        }
-      }
-
-      if (heartRateService == null) {
-        _addDebugLog(
-            '⚠️ Heart rate service not found, checking all characteristics');
-        // For devices like Magene H003, try to find heart rate characteristic in any service
-        for (BluetoothService service in services) {
-          _addDebugLog(
-              '   🔍 Checking service ${service.uuid} for HR characteristic');
-          for (BluetoothCharacteristic characteristic
-              in service.characteristics) {
-            _addDebugLog('      📡 Characteristic: ${characteristic.uuid}');
-            if (_isUuidMatch(characteristic.uuid.toString(),
-                heartRateMeasurementUuid, heartRateMeasurementShortUuid)) {
-              _heartRateCharacteristic = characteristic;
-              _addDebugLog('      ❤️ Found HR measurement characteristic!');
-              break;
-            }
-          }
-          if (_heartRateCharacteristic != null) break;
-        }
-      } else {
-        _addDebugLog(
-            '🔍 Searching for HR measurement characteristic in HR service');
-        // Find heart rate measurement characteristic
-        for (BluetoothCharacteristic characteristic
-            in heartRateService.characteristics) {
-          _addDebugLog('   📡 Characteristic: ${characteristic.uuid}');
-          if (_isUuidMatch(characteristic.uuid.toString(),
-              heartRateMeasurementUuid, heartRateMeasurementShortUuid)) {
-            _heartRateCharacteristic = characteristic;
-            _addDebugLog('   ❤️ Found HR measurement characteristic!');
-            break;
-          }
-        }
-      }
-
-      if (_heartRateCharacteristic == null) {
-        _addDebugLog('❌ Heart rate measurement characteristic not found');
-        throw Exception('Heart rate measurement characteristic not found');
-      }
-
-      _addDebugLog('📡 Setting up heart rate notifications...');
-      // Subscribe to heart rate notifications
-      await _heartRateCharacteristic!.setNotifyValue(true);
-      _heartRateSubscription = _heartRateCharacteristic!.lastValueStream.listen(
-        _processHeartRateData,
-        onError: (error) {
-          _addDebugLog('❌ Heart rate data stream error: $error');
-          AppLogger.error('Heart rate data stream error', error);
-        },
-      );
-
-      _isConnected = true;
-      _connectionController.add(true);
-
-      _addDebugLog('🎉 Successfully connected to ${device.platformName}!');
-      _addDebugLog('🚀 === CONNECTION ATTEMPT COMPLETED SUCCESSFULLY ===');
+      _onConnected(device);
+      _addDebugLog('Connected to ${device.platformName}');
       AppLogger.info('Successfully connected to ${device.platformName}');
       return true;
     } catch (error, stackTrace) {
-      _addDebugLog('💥 === CONNECTION ATTEMPT FAILED ===');
-      _addDebugLog('❌ Connection failed: $error');
-      _addDebugLog('📊 Error type: ${error.runtimeType}');
-
-      // Provide specific error guidance
+      _addDebugLog('Connection failed (${error.runtimeType}): $error');
       if (error.toString().contains('timeout')) {
-        _addDebugLog(
-            '⏰ Connection timed out - device may be out of range or busy');
-      } else if (error.toString().contains('permission')) {
-        _addDebugLog('🔒 Permission error - check Bluetooth permissions');
-      } else if (error.toString().contains('adapter')) {
-        _addDebugLog(
-            '📡 Bluetooth adapter issue - ensure Bluetooth is enabled');
+        _addDebugLog('Timed out - device may be out of range or busy');
       }
-
       AppLogger.error('Failed to connect to device', error, stackTrace);
       await disconnect();
       return false;
     }
   }
 
+  /// Connects, discovers the HR measurement characteristic and subscribes to
+  /// notifications. Throws on failure.
+  Future<void> _establishConnection(BluetoothDevice device,
+      {required Duration timeout}) async {
+    await device.connect(timeout: timeout);
+    _connectedDevice = device;
+
+    final services = await device.discoverServices();
+    _addDebugLog('Discovered ${services.length} services');
+
+    BluetoothCharacteristic? hrCharacteristic;
+
+    // Prefer the standard Heart Rate service...
+    for (final service in services) {
+      if (_isUuidMatch(service.uuid.toString(), heartRateServiceUuid,
+          heartRateServiceShortUuid)) {
+        for (final c in service.characteristics) {
+          if (_isUuidMatch(c.uuid.toString(), heartRateMeasurementUuid,
+              heartRateMeasurementShortUuid)) {
+            hrCharacteristic = c;
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    // ...but some straps (e.g. Magene H003) expose 0x2A37 elsewhere.
+    if (hrCharacteristic == null) {
+      _addDebugLog('HR service not found, checking all characteristics');
+      outer:
+      for (final service in services) {
+        for (final c in service.characteristics) {
+          if (_isUuidMatch(c.uuid.toString(), heartRateMeasurementUuid,
+              heartRateMeasurementShortUuid)) {
+            hrCharacteristic = c;
+            break outer;
+          }
+        }
+      }
+    }
+
+    if (hrCharacteristic == null) {
+      throw Exception('Heart rate measurement characteristic not found');
+    }
+
+    await _heartRateSubscription?.cancel();
+    await hrCharacteristic.setNotifyValue(true);
+    _heartRateSubscription = hrCharacteristic.onValueReceived.listen(
+      _processHeartRateData,
+      onError: (error) {
+        _addDebugLog('Heart rate data stream error: $error');
+        AppLogger.error('Heart rate data stream error', error);
+      },
+    );
+  }
+
+  /// Marks the link as up and starts watching for drops / stale data.
+  void _onConnected(BluetoothDevice device) {
+    _isConnected = true;
+    _isReconnecting = false;
+    _connectedAt = DateTime.now();
+    _lastHeartRateAt = null;
+    _emitConnection(true);
+    // "connected" is confirmed by the first notification; until then (and if
+    // none arrives within staleTimeout) the stale watchdog decides.
+    _setStatus(HeartRateConnectionStatus.connected);
+    _watchDeviceState(device);
+    _startStaleWatchdog();
+  }
+
+  void _watchDeviceState(BluetoothDevice device) {
+    _deviceStateSubscription?.cancel();
+    _deviceStateSubscription = device.connectionState.listen((state) {
+      if (state == BluetoothConnectionState.disconnected &&
+          _isConnected &&
+          identical(device, _connectedDevice)) {
+        _handleUnexpectedDisconnect(device);
+      }
+    });
+  }
+
+  void _startStaleWatchdog() {
+    _staleTimer?.cancel();
+    _staleTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!_isConnected) return;
+      final reference = _lastHeartRateAt ?? _connectedAt;
+      if (reference == null) return;
+      final isStale = DateTime.now().difference(reference) > staleTimeout;
+      if (isStale &&
+          _statusNotifier.value == HeartRateConnectionStatus.connected) {
+        _addDebugLog('No HR data for ${staleTimeout.inSeconds}s - stale');
+        _setStatus(HeartRateConnectionStatus.stale);
+        _emitLive(null);
+      }
+    });
+  }
+
+  Future<void> _handleUnexpectedDisconnect(BluetoothDevice device) async {
+    AppLogger.warning(
+        'Heart rate monitor disconnected unexpectedly: ${device.platformName}');
+    _addDebugLog('Device disconnected unexpectedly');
+
+    // Flip state synchronously so a duplicate event can't re-enter.
+    _isConnected = false;
+    _isReconnecting = true;
+    _staleTimer?.cancel();
+    _staleTimer = null;
+    await _deviceStateSubscription?.cancel();
+    _deviceStateSubscription = null;
+    await _heartRateSubscription?.cancel();
+    _heartRateSubscription = null;
+
+    _emitConnection(false);
+    _emitLive(null);
+    _setStatus(HeartRateConnectionStatus.reconnecting);
+
+    final generation = _connectionGeneration;
+    for (var attempt = 1; attempt <= maxReconnectAttempts; attempt++) {
+      // Backoff: 2s, 4s, 8s
+      await Future.delayed(Duration(seconds: 1 << attempt));
+      if (generation != _connectionGeneration) return; // user disconnected
+
+      if (FlutterBluePlus.adapterStateNow != BluetoothAdapterState.on) {
+        _addDebugLog('Bluetooth off - aborting reconnect');
+        break;
+      }
+
+      _addDebugLog('Reconnect attempt $attempt/$maxReconnectAttempts');
+      try {
+        await _establishConnection(device,
+            timeout: const Duration(seconds: 10));
+        if (generation != _connectionGeneration) return;
+        _onConnected(device);
+        AppLogger.info('Reconnected to ${device.platformName}');
+        return;
+      } catch (error) {
+        _addDebugLog('Reconnect attempt $attempt failed: $error');
+        await _heartRateSubscription?.cancel();
+        _heartRateSubscription = null;
+        try {
+          await device.disconnect();
+        } catch (_) {}
+      }
+    }
+
+    if (generation != _connectionGeneration) return;
+    AppLogger.warning('Giving up reconnecting to heart rate monitor');
+    await disconnect();
+  }
+
   /// Process incoming heart rate data
   void _processHeartRateData(List<int> data) {
     try {
-      if (data.isEmpty) return;
+      if (data.length < 2) return;
 
       // Parse heart rate measurement according to Bluetooth specification
       int heartRate;
@@ -504,6 +647,7 @@ class HeartRateService {
         // Heart rate format is UINT8
         heartRate = data[1];
       } else {
+        if (data.length < 3) return;
         // Heart rate format is UINT16
         heartRate = (data[2] << 8) | data[1];
       }
@@ -511,11 +655,11 @@ class HeartRateService {
       // Validate heart rate (reasonable range: 30-220 BPM)
       if (heartRate >= 30 && heartRate <= 220) {
         _currentHeartRate = heartRate;
+        _lastHeartRateAt = DateTime.now();
 
-        // Add reading with timestamp
         _readings.add(HeartRateReading(
           heartRate: heartRate,
-          timestamp: DateTime.now(),
+          timestamp: _lastHeartRateAt!,
         ));
 
         // Keep only last 15 minutes of data (900 readings at 1 per second)
@@ -523,10 +667,13 @@ class HeartRateService {
           _readings.removeAt(0);
         }
 
-        // Emit heart rate update
-        _heartRateController.add(heartRate);
+        if (_isConnected &&
+            _statusNotifier.value == HeartRateConnectionStatus.stale) {
+          _setStatus(HeartRateConnectionStatus.connected);
+        }
 
-        AppLogger.debug('Heart rate: $heartRate BPM');
+        if (!_heartRateController.isClosed) _heartRateController.add(heartRate);
+        _emitLive(heartRate);
       } else {
         AppLogger.warning('Invalid heart rate reading: $heartRate BPM');
       }
@@ -535,30 +682,37 @@ class HeartRateService {
     }
   }
 
-  /// Disconnect from current device
+  /// Disconnect from current device (also aborts any auto-reconnect).
   Future<void> disconnect() async {
+    _connectionGeneration++;
     try {
       AppLogger.info('Disconnecting from heart rate monitor');
 
-      // Cancel heart rate subscription
+      _staleTimer?.cancel();
+      _staleTimer = null;
+      await _deviceStateSubscription?.cancel();
+      _deviceStateSubscription = null;
       await _heartRateSubscription?.cancel();
       _heartRateSubscription = null;
 
-      // Disconnect from device
-      if (_connectedDevice != null) {
-        await _connectedDevice!.disconnect();
-        _connectedDevice = null;
+      final device = _connectedDevice;
+      _connectedDevice = null;
+      if (device != null) {
+        await device.disconnect();
       }
-
-      _heartRateCharacteristic = null;
-      _isConnected = false;
-      _currentHeartRate = 0;
-
-      _connectionController.add(false);
-
-      AppLogger.info('Disconnected from heart rate monitor');
     } catch (error, stackTrace) {
       AppLogger.error('Failed to disconnect from device', error, stackTrace);
+    } finally {
+      final wasConnected = _isConnected || _isReconnecting;
+      _isConnected = false;
+      _isReconnecting = false;
+      _currentHeartRate = 0;
+      _lastHeartRateAt = null;
+      _connectedAt = null;
+
+      _emitConnection(false);
+      if (wasConnected) _emitLive(null);
+      _setStatus(HeartRateConnectionStatus.disconnected);
     }
   }
 
@@ -648,11 +802,20 @@ class HeartRateService {
 
   /// Dispose of resources
   void dispose() {
-    _heartRateSubscription?.cancel();
-    _heartRateController.close();
-    _connectionController.close();
-    _devicesController.close();
-    disconnect();
+    _scanTimeoutTimer?.cancel();
+    _staleTimer?.cancel();
+    _scanResultsSubscription?.cancel();
+    _scanResultsSubscription = null;
+    _adapterStateSubscription?.cancel();
+    _adapterStateSubscription = null;
+    disconnect().whenComplete(() {
+      _heartRateController.close();
+      _liveHeartRateController.close();
+      _connectionController.close();
+      _devicesController.close();
+      _statusController.close();
+      _debugController.close();
+    });
   }
 }
 

@@ -99,26 +99,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _createNewWorkout(BuildContext context) {
-    AppLogger.info('HomeScreen: Creating new workout');
+    AppLogger.info('HomeScreen: Opening editor for a new workout');
 
-    final newWorkout = Workout(
-      id: 'workout_${DateTime.now().millisecondsSinceEpoch}',
-      name: 'New Workout',
-      description: '',
-      scheduledDate: DateTime.now().add(const Duration(days: 1)),
-      isCompleted: false,
-      sets: [],
-    );
-
-    // Create workout using BLoC
-    context.read<WorkoutBloc>().add(WorkoutCreateRequested(newWorkout));
-
-    // Navigate to workout editing screen
+    // Open the editor for a new (unsaved) workout dated today. Nothing is
+    // persisted until the first completed set is autosaved, so backing out
+    // does not leave an empty workout behind.
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            ExerciseDetailScreen.editWorkout(workoutId: newWorkout.id),
+        builder: (context) => const ExerciseDetailScreen(),
       ),
     ).then((_) => _refreshWorkouts());
   }
@@ -549,15 +538,8 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 12),
               _buildActionCard(
                 icon: Icons.flash_on,
-                title: 'Quick Workout',
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Quick Workout feature coming soon! ⚡'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                },
+                title: 'Start Empty Workout',
+                onTap: () => _createNewWorkout(context),
               ),
               const SizedBox(width: 12),
               _buildActionCard(
@@ -618,7 +600,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       curve: Curves.easeInOut,
-      width: 100, // Fixed width for horizontal scrolling
+      // Fixed width for horizontal scrolling; wide enough that two-word
+      // labels ("Find Your Weight") wrap onto two lines instead of truncating.
+      width: 116,
       child: Card(
         elevation: 2,
         child: Material(
@@ -630,9 +614,11 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap();
             },
             child: Container(
-              padding: const EdgeInsets.all(16.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8.0, vertical: 12.0),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   TweenAnimationBuilder<double>(
                     duration: const Duration(milliseconds: 300),
@@ -640,15 +626,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     builder: (context, scale, child) {
                       return Transform.scale(
                         scale: scale,
-                        child: Icon(icon, size: 32),
+                        child: Icon(icon, size: 30),
                       );
                     },
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
                     title,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelLarge
+                        ?.copyWith(fontWeight: FontWeight.bold, height: 1.2),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),

@@ -49,6 +49,9 @@ dependencies:
   flutter_blue_plus: ^1.32.12
   permission_handler: ^11.3.1
 
+  # Keep the screen on while the workout editor is open
+  wakelock_plus: ^1.5.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

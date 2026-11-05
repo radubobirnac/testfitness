@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:testfitness/blocs/workout/workout_bloc.dart';
 import 'package:testfitness/blocs/workout/workout_event.dart';
@@ -19,6 +20,7 @@ import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/audio_player_util.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 class ExerciseDetailScreen extends StatefulWidget {
   final Exercise? exercise;
@@ -77,6 +79,10 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     super.initState();
     _workoutBloc = context.read<WorkoutBloc>();
 
+    // Keep the screen on while logging a workout so it doesn't lock between
+    // sets.
+    unawaited(_setWakelock(true));
+
     if (widget.workoutId != null) {
       // Load existing workout using BLoC
       _currentWorkoutId = widget.workoutId;
@@ -122,7 +128,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       for (final sets in _exerciseSets.values) {
         for (final set in sets) {
           _weightControllers[set.id] =
-              TextEditingController(text: set.weight.toString());
+              TextEditingController(text: _formatWeight(set.weight));
           _repsControllers[set.id] =
               TextEditingController(text: set.reps.toString());
         }
@@ -154,7 +160,19 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     // Stop any playing sounds
     AudioPlayerUtil().stopSound();
 
+    unawaited(_setWakelock(false));
+
     super.dispose();
+  }
+
+  /// Enable/disable the screen wakelock. Failures (e.g. unsupported platform,
+  /// tests without the plugin) are non-fatal.
+  Future<void> _setWakelock(bool enabled) async {
+    try {
+      await WakelockPlus.toggle(enable: enabled);
+    } catch (e) {
+      AppLogger.debug('Wakelock ${enabled ? 'enable' : 'disable'} failed: $e');
+    }
   }
 
   // Start or reset the rest timer using TimerBloc
@@ -223,7 +241,11 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       if (_currentWorkoutId != null) return;
       // New workout: create it on the first completed set.
       if (!allSets.any((set) => set.isCompleted)) return;
-      workout = Workout.create(name: _nameController.text, sets: allSets);
+      workout = Workout.create(
+        name: _nameController.text,
+        scheduledDate: DateTime.now(),
+        sets: allSets,
+      );
       _currentWorkoutId = workout.id;
       _workoutBloc.add(WorkoutCreateRequested(workout, silent: true));
     }
@@ -260,11 +282,49 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     _scheduleAutosave();
   }
 
+  /// Weight & reps a new set for [exerciseId] should start with: a copy of the
+  /// previous set in this workout, else the exercise's most recent completed
+  /// set from past workouts, else 0 x 8.
+  ({double weight, int reps}) _defaultsForNewSet(String exerciseId) {
+    final existing = _exerciseSets[exerciseId];
+    if (existing != null && existing.isNotEmpty) {
+      final last = existing.last;
+      return (weight: last.weight, reps: last.reps);
+    }
+    final previous = _lastCompletedSetFromHistory(exerciseId);
+    if (previous != null) {
+      return (weight: previous.weight, reps: previous.reps);
+    }
+    return (weight: 0, reps: 8);
+  }
+
+  /// The most recent completed set of [exerciseId] in any other workout
+  /// currently loaded in [WorkoutBloc], or null if there is none.
+  WorkoutSet? _lastCompletedSetFromHistory(String exerciseId) {
+    WorkoutSet? best;
+    DateTime? bestTime;
+    for (final workout in _workoutBloc.state.workouts) {
+      if (workout.id == _currentWorkoutId) continue;
+      final workoutTime = workout.completedDate ?? workout.scheduledDate;
+      for (final set in workout.sets) {
+        if (set.exerciseId != exerciseId || !set.isCompleted) continue;
+        final time = set.completedAt ?? workoutTime;
+        if (best == null ||
+            (time != null && (bestTime == null || !time.isBefore(bestTime)))) {
+          best = set;
+          bestTime = time;
+        }
+      }
+    }
+    return best;
+  }
+
   void _addSetForExercise(String exerciseId) {
+    final defaults = _defaultsForNewSet(exerciseId);
     final newSet = WorkoutSet.create(
       exerciseId: exerciseId,
-      reps: 8,
-      weight: 0,
+      reps: defaults.reps,
+      weight: defaults.weight,
       isCompleted: false,
     );
 
@@ -273,79 +333,110 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
 
       // Create controllers for the new set
       final setKey = newSet.id;
-      _weightControllers[setKey] = TextEditingController(text: '0');
-      _repsControllers[setKey] = TextEditingController(text: '8');
+      _weightControllers[setKey] =
+          TextEditingController(text: _formatWeight(newSet.weight));
+      _repsControllers[setKey] =
+          TextEditingController(text: newSet.reps.toString());
     });
     _markDirty();
     _scheduleAutosave();
   }
 
-  void _removeSetForExercise(String exerciseId, int index) {
-    if (_exerciseSets.containsKey(exerciseId) &&
-        index >= 0 &&
-        index < (_exerciseSets[exerciseId]?.length ?? 0)) {
-      // Get the set ID before removing it
-      final setId = _exerciseSets[exerciseId]![index].id;
+  /// Delete a set (e.g. after a swipe) and offer an Undo that restores it at
+  /// the same position.
+  void _deleteSet(String exerciseId, int index) {
+    final sets = _exerciseSets[exerciseId];
+    if (sets == null || index < 0 || index >= sets.length) return;
 
-      setState(() {
-        // Remove the set
-        _exerciseSets[exerciseId]?.removeAt(index);
+    final removed = sets[index];
+    final weightController = _weightControllers.remove(removed.id);
+    final repsController = _repsControllers.remove(removed.id);
 
-        // Clean up controllers
-        if (_weightControllers.containsKey(setId)) {
-          _weightControllers[setId]!.dispose();
-          _weightControllers.remove(setId);
-        }
+    setState(() {
+      sets.removeAt(index);
+    });
+    // Dispose after the row has left the tree.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      weightController?.dispose();
+      repsController?.dispose();
+    });
+    _markDirty();
+    _scheduleAutosave();
 
-        if (_repsControllers.containsKey(setId)) {
-          _repsControllers[setId]!.dispose();
-          _repsControllers.remove(setId);
-        }
-
-        // If no sets left, consider removing the exercise entirely
-        if (_exerciseSets[exerciseId]?.isEmpty ?? false) {
-          // Ask user if they want to remove the exercise
-          _confirmRemoveExercise(exerciseId);
-        }
-      });
-      _markDirty();
-      _scheduleAutosave();
-    }
-  }
-
-  void _confirmRemoveExercise(String exerciseId) {
-    final exercise = _exercises[exerciseId];
-    if (exercise == null) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove Exercise'),
-        content: Text('Remove ${exercise.name} from this workout?'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Add an empty set to keep the exercise
-              _addSetForExercise(exerciseId);
-            },
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _exerciseSets.remove(exerciseId);
-                _exercises.remove(exerciseId);
-              });
-              _markDirty();
-              _scheduleAutosave();
-            },
-            child: const Text('Remove'),
-          ),
-        ],
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Set ${index + 1} deleted'),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => _restoreSet(exerciseId, index, removed),
+        ),
       ),
     );
+  }
+
+  void _restoreSet(String exerciseId, int index, WorkoutSet set) {
+    if (!mounted) return;
+    final sets = _exerciseSets[exerciseId];
+    // The exercise was removed in the meantime: nothing to restore into.
+    if (sets == null || !_exercises.containsKey(exerciseId)) return;
+    if (sets.any((s) => s.id == set.id)) return;
+
+    setState(() {
+      sets.insert(index.clamp(0, sets.length), set);
+      _weightControllers[set.id] =
+          TextEditingController(text: _formatWeight(set.weight));
+      _repsControllers[set.id] =
+          TextEditingController(text: set.reps.toString());
+    });
+    _markDirty();
+    _scheduleAutosave();
+  }
+
+  void _removeExercise(String exerciseId) {
+    setState(() {
+      _exerciseSets.remove(exerciseId);
+      _exercises.remove(exerciseId);
+    });
+    _markDirty();
+    _scheduleAutosave();
+  }
+
+  /// Weight increment for the -/+ steppers in the user's unit.
+  double get _weightStep =>
+      UserPreferencesService().getUseMetricUnits() ? 2.5 : 5.0;
+
+  void _stepWeight(String exerciseId, int index, double delta) {
+    final set = _exerciseSets[exerciseId]?[index];
+    if (set == null) return;
+    final controller = _weightControllers[set.id];
+    final current =
+        double.tryParse(controller?.text.replaceAll(',', '.') ?? '') ??
+            set.weight;
+    final next = max(0.0, current + delta);
+    controller?.text = _formatWeight(next);
+    _updateSetWeightForExercise(exerciseId, index, next);
+  }
+
+  void _stepReps(String exerciseId, int index, int delta) {
+    final set = _exerciseSets[exerciseId]?[index];
+    if (set == null) return;
+    final controller = _repsControllers[set.id];
+    final current = int.tryParse(controller?.text ?? '') ?? set.reps;
+    final next = max(0, current + delta);
+    controller?.text = next.toString();
+    _updateSetRepsForExercise(exerciseId, index, next);
+  }
+
+  /// Format a weight without a trailing ".0" (60 -> "60", 62.5 -> "62.5").
+  static String _formatWeight(double weight) {
+    if (weight == weight.roundToDouble()) return weight.toInt().toString();
+    return weight
+        .toStringAsFixed(2)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
   }
 
   void _toggleSetCompletionForExercise(String exerciseId, int index) {
@@ -549,6 +640,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       // Create a new workout
       final workout = Workout.create(
         name: _nameController.text,
+        scheduledDate: DateTime.now(),
         sets: allSets,
       );
       _currentWorkoutId = workout.id;
@@ -609,14 +701,14 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                 );
               }
 
-            // Handle timer completion
-            if (state.isCompleted) {
-              // Play sound if enabled in preferences
-              if (!state.completedWhileBackgrounded &&
-                  UserPreferencesService().getPlaySoundOnTimerEnd()) {
-                AudioPlayerUtil().playTimerEndSound();
+              // Handle timer completion
+              if (state.isCompleted) {
+                // Play sound if enabled in preferences
+                if (!state.completedWhileBackgrounded &&
+                    UserPreferencesService().getPlaySoundOnTimerEnd()) {
+                  AudioPlayerUtil().playTimerEndSound();
+                }
               }
-            }
             },
           ),
           // Listen to WorkoutBloc for workout operations
@@ -666,7 +758,9 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                       state.currentWorkout!, exerciseState.exercises);
                 } else {
                   // Load exercises if not already loaded
-                  context.read<ExerciseBloc>().add(const ExerciseLoadRequested());
+                  context
+                      .read<ExerciseBloc>()
+                      .add(const ExerciseLoadRequested());
                 }
               }
             },
@@ -708,442 +802,525 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                     return Scaffold(
                       appBar: AppBar(
                         title: Row(
-                        children: [
-                          // Title (takes most of the space)
-                          Expanded(
-                            child: InkWell(
-                              onTap: () {
-                                setState(() {
-                                  _isEditingTitle = true;
-                                });
-                                _titleFocusNode.requestFocus();
-                              },
-                              child: _isEditingTitle
-                                  ? TextField(
-                                      controller: _nameController,
-                                      focusNode: _titleFocusNode,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      cursorColor: Colors.white,
-                                      decoration: InputDecoration(
-                                        border: InputBorder.none,
-                                        contentPadding: EdgeInsets.zero,
-                                        filled: true,
-                                        fillColor:
-                                            Colors.black.withValues(alpha: 0.2),
-                                      ),
-                                    )
-                                  : Text(_nameController.text),
-                            ),
-                          ),
-
-                          // Timer display on the right
-                          if (timerState.currentMotivationalPhrase != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.green.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 3.0, // Keep the thick white border
-                                ),
-                              ),
-                              child: Text(
-                                timerState.currentMotivationalPhrase!,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green.shade800,
-                                ),
-                              ),
-                            )
-                          else if (timerState.isRunning)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.green.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 3.0, // Keep the thick white border
-                                ),
-                              ),
-                              child: Text(
-                                timerState.formattedTime,
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green.shade800,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      // No actions (removing the Save button)
-                      actions: [],
-                    ),
-                    body: isLoading
-                        ? const Center(child: CircularProgressIndicator())
-                        : SingleChildScrollView(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Exercise sections
-                                ..._exercises.entries.map((entry) {
-                                  final exerciseId = entry.key;
-                                  final exercise = entry.value;
-                                  final sets = _exerciseSets[exerciseId] ?? [];
-
-                                  return Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      // Exercise header with replace button
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              _formatExerciseTitle(exercise),
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .titleLarge,
-                                            ),
-                                          ),
-                                          if (widget.workoutId !=
-                                              null) // Only show replace button when editing workout
-                                            IconButton(
-                                              icon:
-                                                  const Icon(Icons.swap_horiz),
-                                              tooltip: 'Replace Exercise',
-                                              onPressed: () =>
-                                                  _showExerciseReplacementSheet(
-                                                      exerciseId),
-                                              style: IconButton.styleFrom(
-                                                backgroundColor:
-                                                    Theme.of(context)
-                                                        .colorScheme
-                                                        .secondary,
-                                                foregroundColor: Colors.white,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-
-                                      if (_showExerciseDescription(
-                                          exercise.description)) ...[
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          exercise.description!.trim(),
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium,
-                                        ),
-                                      ],
-
-                                      const SizedBox(height: 16),
-
-                                      // Sets table header
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8.0),
-                                        child: Row(
-                                          children: [
-                                            const SizedBox(
-                                              width: 50,
-                                              child: Text(
-                                                'Set',
-                                                style: TextStyle(
-                                                    fontWeight:
-                                                        FontWeight.bold),
-                                              ),
-                                            ),
-                                            Expanded(
-                                              flex: 2,
-                                              child: Text(
-                                                UserPreferencesService()
-                                                    .getWeightUnitLabel(),
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodyLarge
-                                                    ?.copyWith(
-                                                        fontWeight:
-                                                            FontWeight.bold),
-                                              ),
-                                            ),
-                                            Expanded(
-                                              flex: 2,
-                                              child: Text(
-                                                'Reps',
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodyLarge
-                                                    ?.copyWith(
-                                                        fontWeight:
-                                                            FontWeight.bold),
-                                              ),
-                                            ),
-                                            const SizedBox(
-                                                width:
-                                                    90), // Space for action buttons
-                                          ],
-                                        ),
-                                      ),
-
-                                      const Divider(),
-
-                                      // Sets list for this exercise
-                                      ListView.builder(
-                                        shrinkWrap: true,
-                                        physics:
-                                            const NeverScrollableScrollPhysics(),
-                                        itemCount: sets.length,
-                                        itemBuilder: (context, index) {
-                                          final set = sets[index];
-                                          return Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 4.0),
-                                            child: Row(
-                                              children: [
-                                                // Set number
-                                                SizedBox(
-                                                  width: 50,
-                                                  child: Container(
-                                                    padding:
-                                                        const EdgeInsets.all(
-                                                            8.0),
-                                                    decoration: BoxDecoration(
-                                                      color:
-                                                          Colors.grey.shade200,
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              4.0),
-                                                    ),
-                                                    child: Text(
-                                                      '${index + 1}',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-
-                                                // Weight input
-                                                Expanded(
-                                                  flex: 2,
-                                                  child: Padding(
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                      horizontal: 8.0,
-                                                    ),
-                                                    child: TextField(
-                                                      keyboardType:
-                                                          TextInputType.number,
-                                                      decoration:
-                                                          const InputDecoration(
-                                                        border:
-                                                            OutlineInputBorder(),
-                                                        contentPadding:
-                                                            EdgeInsets
-                                                                .symmetric(
-                                                          horizontal: 12,
-                                                          vertical: 8,
-                                                        ),
-                                                      ),
-                                                      controller: _weightControllers[
-                                                              set.id] ??
-                                                          TextEditingController(
-                                                              text: set.weight
-                                                                  .toString()),
-                                                      onChanged: (value) {
-                                                        final weight =
-                                                            double.tryParse(
-                                                                    value) ??
-                                                                0;
-                                                        _updateSetWeightForExercise(
-                                                            exerciseId,
-                                                            index,
-                                                            weight);
-                                                      },
-                                                    ),
-                                                  ),
-                                                ),
-
-                                                // Reps input
-                                                Expanded(
-                                                  flex: 2,
-                                                  child: Padding(
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                      horizontal: 8.0,
-                                                    ),
-                                                    child: TextField(
-                                                      keyboardType:
-                                                          TextInputType.number,
-                                                      decoration:
-                                                          const InputDecoration(
-                                                        border:
-                                                            OutlineInputBorder(),
-                                                        contentPadding:
-                                                            EdgeInsets
-                                                                .symmetric(
-                                                          horizontal: 12,
-                                                          vertical: 8,
-                                                        ),
-                                                      ),
-                                                      controller: _repsControllers[
-                                                              set.id] ??
-                                                          TextEditingController(
-                                                              text: set.reps
-                                                                  .toString()),
-                                                      onChanged: (value) {
-                                                        final reps =
-                                                            int.tryParse(
-                                                                    value) ??
-                                                                0;
-                                                        _updateSetRepsForExercise(
-                                                            exerciseId,
-                                                            index,
-                                                            reps);
-                                                      },
-                                                    ),
-                                                  ),
-                                                ),
-
-                                                // Action buttons
-                                                Row(
-                                                  children: [
-                                                    // Complete button
-                                                    IconButton(
-                                                      icon: Icon(
-                                                        set.isCompleted
-                                                            ? Icons.check_circle
-                                                            : Icons
-                                                                .check_circle_outline,
-                                                        color: set.isCompleted
-                                                            ? Colors.green
-                                                            : Colors.grey,
-                                                      ),
-                                                      onPressed: () =>
-                                                          _toggleSetCompletionForExercise(
-                                                              exerciseId,
-                                                              index),
-                                                    ),
-
-                                                    // Delete button
-                                                    Container(
-                                                      width: 36,
-                                                      height: 36,
-                                                      decoration: BoxDecoration(
-                                                        color: Colors.red,
-                                                        shape: BoxShape.circle,
-                                                      ),
-                                                      child: IconButton(
-                                                        icon: const Icon(
-                                                          Icons.delete_outline,
-                                                          color: Colors.white,
-                                                          size: 18,
-                                                        ),
-                                                        padding:
-                                                            EdgeInsets.zero,
-                                                        onPressed: () =>
-                                                            _removeSetForExercise(
-                                                                exerciseId,
-                                                                index),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      ),
-
-                                      // Add set button for this exercise
-                                      Center(
-                                        child: ElevatedButton(
-                                          onPressed: () =>
-                                              _addSetForExercise(exerciseId),
-                                          child: const Text('Add Set'),
-                                        ),
-                                      ),
-
-                                      const SizedBox(height: 32),
-                                    ],
-                                  );
-                                }),
-
-                                // AI Reasoning section (if available)
-                                if (workoutState.currentWorkout?.notes !=
-                                        null &&
-                                    (workoutState.currentWorkout!.notes!
-                                            .contains(
-                                                '🤖 AI WORKOUT REASONING') ||
-                                        workoutState.currentWorkout!.notes!
-                                            .contains(
-                                                '🧠 NEXT WORKOUT REASONING')))
-                                  _buildAIReasoningSection(
-                                      workoutState.currentWorkout!.notes!),
-
-                                // Add exercises button
-                                Center(
-                                  child: ElevatedButton(
-                                    onPressed: _showExerciseSelectionSheet,
-                                    style: ElevatedButton.styleFrom(
-                                      minimumSize: const Size(200, 40),
-                                    ),
-                                    child: const Text('Add Exercises'),
-                                  ),
-                                ),
-
-                                const SizedBox(height: 32),
-                              ],
-                            ),
-                          ),
-                    bottomNavigationBar: BottomAppBar(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16.0, vertical: 8.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            ElevatedButton(
-                              onPressed: _hasUnsavedChanges
-                                  ? _confirmDiscardChanges
-                                  : () => Navigator.pop(context),
-                              child: const Text('CANCEL'),
-                            ),
-                            ElevatedButton(
-                              onPressed: (!isLoading &&
-                                      (_hasUnsavedChanges ||
-                                          _persistedWorkout != null))
-                                  ? _saveWorkout
-                                  : null,
-                              child: const Text('SAVE'),
+                            // Title (takes most of the space)
+                            Expanded(
+                              child: InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    _isEditingTitle = true;
+                                  });
+                                  _titleFocusNode.requestFocus();
+                                },
+                                child: _isEditingTitle
+                                    ? TextField(
+                                        controller: _nameController,
+                                        focusNode: _titleFocusNode,
+                                        style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onPrimary,
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        cursorColor: Theme.of(context)
+                                            .colorScheme
+                                            .onPrimary,
+                                        decoration: InputDecoration(
+                                          border: InputBorder.none,
+                                          contentPadding: EdgeInsets.zero,
+                                          filled: true,
+                                          fillColor: Colors.black
+                                              .withValues(alpha: 0.2),
+                                        ),
+                                      )
+                                    : Text(_nameController.text),
+                              ),
                             ),
                           ],
                         ),
+                        // No actions (removing the Save button)
+                        actions: [],
                       ),
-                    ),
-                  );
-                },
-              );
-            },
-          );
-        },
+                      body: isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : SingleChildScrollView(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Exercise sections
+                                  ..._exercises.entries.map((entry) {
+                                    final exerciseId = entry.key;
+                                    final exercise = entry.value;
+                                    final sets =
+                                        _exerciseSets[exerciseId] ?? [];
+
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        // Exercise header with replace button
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                _formatExerciseTitle(exercise),
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .titleLarge,
+                                              ),
+                                            ),
+                                            IconButton(
+                                                icon: const Icon(
+                                                    Icons.swap_horiz),
+                                                tooltip: 'Replace Exercise',
+                                                onPressed: () =>
+                                                    _showExerciseReplacementSheet(
+                                                        exerciseId),
+                                                style: IconButton.styleFrom(
+                                                  backgroundColor:
+                                                      Theme.of(context)
+                                                          .colorScheme
+                                                          .secondary,
+                                                  foregroundColor:
+                                                      Theme.of(context)
+                                                          .colorScheme
+                                                          .onSecondary,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+
+                                        if (_showExerciseDescription(
+                                            exercise.description)) ...[
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            exercise.description!.trim(),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium,
+                                          ),
+                                        ],
+
+                                        const SizedBox(height: 16),
+
+                                        // Sets table header
+                                        _buildSetsHeader(context),
+
+                                        const Divider(),
+
+                                        // Sets list for this exercise.
+                                        // Swipe a row left to delete it.
+                                        ListView.builder(
+                                          shrinkWrap: true,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          itemCount: sets.length,
+                                          itemBuilder: (context, index) =>
+                                              _buildSetRow(context, exerciseId,
+                                                  index, sets[index]),
+                                        ),
+
+                                        if (sets.isEmpty)
+                                          Center(
+                                            child: TextButton.icon(
+                                              onPressed: () =>
+                                                  _removeExercise(exerciseId),
+                                              icon: const Icon(
+                                                  Icons.remove_circle_outline),
+                                              label:
+                                                  const Text('Remove exercise'),
+                                            ),
+                                          ),
+
+                                        // Add set button for this exercise
+                                        Center(
+                                          child: ElevatedButton(
+                                            onPressed: () =>
+                                                _addSetForExercise(exerciseId),
+                                            child: const Text('Add Set'),
+                                          ),
+                                        ),
+
+                                        const SizedBox(height: 32),
+                                      ],
+                                    );
+                                  }),
+
+                                  // AI Reasoning section (if available)
+                                  if (workoutState.currentWorkout?.notes !=
+                                          null &&
+                                      (workoutState.currentWorkout!.notes!
+                                              .contains(
+                                                  '🤖 AI WORKOUT REASONING') ||
+                                          workoutState.currentWorkout!.notes!
+                                              .contains(
+                                                  '🧠 NEXT WORKOUT REASONING')))
+                                    _buildAIReasoningSection(
+                                        workoutState.currentWorkout!.notes!),
+
+                                  // Add exercises button
+                                  Center(
+                                    child: ElevatedButton(
+                                      onPressed: _showExerciseSelectionSheet,
+                                      style: ElevatedButton.styleFrom(
+                                        minimumSize: const Size(200, 40),
+                                      ),
+                                      child: const Text('Add Exercises'),
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 32),
+                                ],
+                              ),
+                            ),
+                      bottomNavigationBar: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_showRestTimerBar(timerState))
+                            _buildRestTimerBar(context, timerState),
+                          BottomAppBar(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0, vertical: 8.0),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  ElevatedButton(
+                                    onPressed: _hasUnsavedChanges
+                                        ? _confirmDiscardChanges
+                                        : () => Navigator.pop(context),
+                                    child: const Text('CANCEL'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: (!isLoading &&
+                                            (_hasUnsavedChanges ||
+                                                _persistedWorkout != null))
+                                        ? _saveWorkout
+                                        : null,
+                                    child: const Text('SAVE'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            );
+          },
+        ),
       ),
-    ),
-  );
+    );
+  }
+
+  Widget _buildSetsHeader(BuildContext context) {
+    final style = Theme.of(context)
+        .textTheme
+        .bodyLarge
+        ?.copyWith(fontWeight: FontWeight.bold);
+    return Row(
+      children: [
+        SizedBox(
+          width: _setNumberWidth,
+          child: Text('Set', textAlign: TextAlign.center, style: style),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(UserPreferencesService().getWeightUnitLabel(),
+              textAlign: TextAlign.center, style: style),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text('Reps', textAlign: TextAlign.center, style: style),
+        ),
+        const SizedBox(width: 48), // Complete check column
+      ],
+    );
+  }
+
+  static const double _setNumberWidth = 40;
+
+  /// One set: number, weight & reps fields (with -/+ steppers while the set
+  /// is not completed) and a full-size complete check. Swipe left to delete.
+  Widget _buildSetRow(
+      BuildContext context, String exerciseId, int index, WorkoutSet set) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final showSteppers = !set.isCompleted;
+
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Set number (long-press also deletes, as an alternative to swipe)
+          SizedBox(
+            width: _setNumberWidth,
+            height: 48,
+            child: Material(
+              color: colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onLongPress: () => _deleteSet(exerciseId, index),
+                child: Center(
+                  child: Text(
+                    '${index + 1}',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurface,
+                        ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Weight
+          Expanded(
+            child: _buildNumberField(
+              context,
+              controller: _weightControllers[set.id] ??
+                  TextEditingController(text: _formatWeight(set.weight)),
+              decimal: true,
+              semanticLabel: 'Set ${index + 1} weight',
+              onChanged: (value) {
+                final weight = double.tryParse(value) ?? 0;
+                _updateSetWeightForExercise(exerciseId, index, weight);
+              },
+              onDecrement: showSteppers
+                  ? () => _stepWeight(exerciseId, index, -_weightStep)
+                  : null,
+              onIncrement: showSteppers
+                  ? () => _stepWeight(exerciseId, index, _weightStep)
+                  : null,
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Reps
+          Expanded(
+            child: _buildNumberField(
+              context,
+              controller: _repsControllers[set.id] ??
+                  TextEditingController(text: set.reps.toString()),
+              decimal: false,
+              semanticLabel: 'Set ${index + 1} reps',
+              onChanged: (value) {
+                final reps = int.tryParse(value) ?? 0;
+                _updateSetRepsForExercise(exerciseId, index, reps);
+              },
+              onDecrement:
+                  showSteppers ? () => _stepReps(exerciseId, index, -1) : null,
+              onIncrement:
+                  showSteppers ? () => _stepReps(exerciseId, index, 1) : null,
+            ),
+          ),
+
+          // Complete check (full 48dp target)
+          IconButton(
+            iconSize: 28,
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            tooltip: set.isCompleted ? 'Mark set not done' : 'Complete set',
+            icon: Icon(
+              set.isCompleted ? Icons.check_circle : Icons.check_circle_outline,
+              color: set.isCompleted
+                  ? colorScheme.primary
+                  : colorScheme.onSurfaceVariant,
+            ),
+            onPressed: () => _toggleSetCompletionForExercise(exerciseId, index),
+          ),
+        ],
+      ),
+    );
+
+    return Dismissible(
+      key: ValueKey('set-${set.id}'),
+      direction: DismissDirection.endToStart,
+      onDismissed: (_) => _deleteSet(exerciseId, index),
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: colorScheme.errorContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Delete',
+                style: TextStyle(
+                    color: colorScheme.onErrorContainer,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+            Icon(Icons.delete_outline, color: colorScheme.onErrorContainer),
+          ],
+        ),
+      ),
+      child: row,
+    );
+  }
+
+  /// A numeric text field with optional -/+ stepper buttons beneath it.
+  Widget _buildNumberField(
+    BuildContext context, {
+    required TextEditingController controller,
+    required bool decimal,
+    required String semanticLabel,
+    required ValueChanged<String> onChanged,
+    VoidCallback? onDecrement,
+    VoidCallback? onIncrement,
+  }) {
+    final field = Semantics(
+      label: semanticLabel,
+      child: TextField(
+        controller: controller,
+        textAlign: TextAlign.center,
+        keyboardType: decimal
+            ? const TextInputType.numberWithOptions(decimal: true)
+            : TextInputType.number,
+        inputFormatters: decimal
+            ? const [DecimalWeightInputFormatter()]
+            : [FilteringTextInputFormatter.digitsOnly],
+        decoration: InputDecoration(
+          border: const OutlineInputBorder(),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          isDense: true,
+        ),
+        style: Theme.of(context).textTheme.titleMedium,
+        onChanged: onChanged,
+      ),
+    );
+    if (onDecrement == null && onIncrement == null) return field;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        field,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.remove),
+              tooltip: 'Decrease',
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              visualDensity: VisualDensity.standard,
+              onPressed: onDecrement,
+            ),
+            IconButton(
+              icon: const Icon(Icons.add),
+              tooltip: 'Increase',
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              visualDensity: VisualDensity.standard,
+              onPressed: onIncrement,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  bool _showRestTimerBar(TimerState timer) =>
+      timer.isRunning ||
+      timer.isPaused ||
+      (timer.isCompleted && timer.currentMotivationalPhrase != null);
+
+  /// Rest timer pinned above the CANCEL/SAVE bar: large countdown, progress,
+  /// -15s / +15s / Skip, and the motivational phrase once rest is over.
+  Widget _buildRestTimerBar(BuildContext context, TimerState timer) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final onColor = colorScheme.onPrimaryContainer;
+    final timerBloc = context.read<TimerBloc>();
+    final finished = timer.isCompleted && !timer.isRunning;
+
+    return Material(
+      color: colorScheme.primaryContainer,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(
+            value: finished ? 0 : timer.progress.clamp(0.0, 1.0),
+            minHeight: 4,
+            backgroundColor: colorScheme.primaryContainer,
+            color: colorScheme.primary,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+            child: Row(
+              children: [
+                Icon(finished ? Icons.notifications_active : Icons.timer,
+                    color: onColor),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        finished ? 'Rest over' : timer.formattedTime,
+                        semanticsLabel: finished
+                            ? 'Rest over'
+                            : 'Rest time remaining ${timer.formattedTime}',
+                        style: textTheme.headlineSmall?.copyWith(
+                          color: onColor,
+                          fontWeight: FontWeight.bold,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      if (timer.currentMotivationalPhrase != null)
+                        Text(
+                          timer.currentMotivationalPhrase!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.bodySmall?.copyWith(color: onColor),
+                        ),
+                    ],
+                  ),
+                ),
+                if (!finished) ...[
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: onColor,
+                      minimumSize: const Size(48, 48),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: () =>
+                        timerBloc.add(const TimerTimeSubtracted(15)),
+                    child: const Text('−15s'),
+                  ),
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: onColor,
+                      minimumSize: const Size(48, 48),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: () => timerBloc.add(const TimerTimeAdded(15)),
+                    child: const Text('+15s'),
+                  ),
+                ],
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: onColor,
+                    minimumSize: const Size(48, 48),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () => timerBloc.add(const TimerStopped()),
+                  child: Text(finished ? 'Dismiss' : 'Skip'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Build AI reasoning section widget
@@ -1164,9 +1341,10 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey.shade50,
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300),
+                border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant),
               ),
               child: Text(
                 aiReasoning,
@@ -1180,5 +1358,23 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         ],
       ),
     );
+  }
+}
+
+/// Allows a decimal weight: digits with at most one decimal separator and up
+/// to two decimals. A ',' (as typed on many European keypads) is normalised to
+/// '.'.
+class DecimalWeightInputFormatter extends TextInputFormatter {
+  const DecimalWeightInputFormatter();
+
+  static final RegExp _pattern = RegExp(r'^\d*\.?\d{0,2}$');
+
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    final normalised = newValue.text.replaceAll(',', '.');
+    if (!_pattern.hasMatch(normalised)) return oldValue;
+    // Same length, so the selection stays valid.
+    return newValue.copyWith(text: normalised);
   }
 }

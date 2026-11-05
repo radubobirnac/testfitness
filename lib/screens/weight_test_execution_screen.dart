@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:testfitness/models/weight_test.dart';
+import 'package:testfitness/screens/exercise_detail_screen.dart'
+    show DecimalWeightInputFormatter;
 import 'package:testfitness/services/ai_service.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/offline_indicator.dart';
 
@@ -40,6 +43,11 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
   // Progressive loading algorithm
   double _startingWeight = 0;
   double _weightIncrement = 0;
+
+  /// The user's preferred weight unit, lower-cased for inline text
+  /// ("kg" / "lbs").
+  String get _unit =>
+      UserPreferencesService().getWeightUnitLabel().toLowerCase();
 
   @override
   void initState() {
@@ -91,7 +99,7 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
     try {
       final coaching = await _aiService.answerFitnessQuestion(
         'Provide encouraging coaching for starting a ${widget.exerciseName} weight test. '
-        'The user is starting with ${_currentWeight}lbs for ${widget.targetReps} reps. '
+        'The user is starting with $_currentWeight$_unit for ${widget.targetReps} reps. '
         'Give safety tips and form reminders. Keep it brief and motivational.',
       );
 
@@ -101,7 +109,7 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
     } catch (e) {
       setState(() {
         _aiCoaching = 'Welcome to your ${widget.exerciseName} weight test! '
-            'Start with ${_currentWeight}lbs and focus on perfect form. '
+            'Start with $_currentWeight$_unit and focus on perfect form. '
             'We\'ll gradually increase the weight to find your optimal working weight.';
       });
     }
@@ -131,7 +139,7 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
 
     HapticFeedback.lightImpact();
     AppLogger.info(
-        'Completed set $_currentSetNumber: ${_currentWeight}lbs x $_currentReps reps (RPE: $_currentRpe)');
+        'Completed set $_currentSetNumber: $_currentWeight$_unit x $_currentReps reps (RPE: $_currentRpe)');
 
     // Check if test should continue
     if (_shouldContinueTest(set)) {
@@ -173,8 +181,8 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
     try {
       final coaching = await _aiService.answerFitnessQuestion(
         'Provide coaching for set $_currentSetNumber of a ${widget.exerciseName} weight test. '
-        'Previous set: ${_completedSets.last.weight}lbs x ${_completedSets.last.reps} reps (RPE: ${_completedSets.last.rpe}). '
-        'Next weight: ${_currentWeight}lbs. Give encouragement and form tips. Keep it brief.',
+        'Previous set: ${_completedSets.last.weight}$_unit x ${_completedSets.last.reps} reps (RPE: ${_completedSets.last.rpe}). '
+        'Next weight: $_currentWeight$_unit. Give encouragement and form tips. Keep it brief.',
       );
 
       setState(() {
@@ -183,7 +191,7 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
     } catch (e) {
       setState(() {
         _aiCoaching =
-            'Great job! Now try ${_currentWeight}lbs for ${widget.targetReps} reps. '
+            'Great job! Now try $_currentWeight$_unit for ${widget.targetReps} reps. '
             'Focus on maintaining perfect form as the weight increases.';
       });
     }
@@ -247,22 +255,27 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
                 'Set $_currentSetNumber',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimary,
                     ),
               ),
               const SizedBox(height: 8),
               Text(
                 '${widget.exerciseName} • Target: ${widget.targetReps} reps',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimary,
                     ),
               ),
               const SizedBox(height: 8),
               LinearProgressIndicator(
                 value: _completedSets.length / 6, // Assume max 6 sets
-                backgroundColor: Colors.grey.withValues(alpha: 0.3),
+                // Drawn on a primary-coloured card, so use onPrimary for the
+                // bar (a primary bar would be invisible).
+                backgroundColor: Theme.of(context)
+                    .colorScheme
+                    .onPrimary
+                    .withValues(alpha: 0.3),
                 valueColor: AlwaysStoppedAnimation<Color>(
-                  Theme.of(context).colorScheme.primary,
+                  Theme.of(context).colorScheme.onPrimary,
                 ),
               ),
             ],
@@ -326,10 +339,12 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
                 Expanded(
                   child: TextField(
                     controller: _weightController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Weight (lbs)',
-                      border: OutlineInputBorder(),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: const [DecimalWeightInputFormatter()],
+                    decoration: InputDecoration(
+                      labelText: 'Weight ($_unit)',
+                      border: const OutlineInputBorder(),
                     ),
                     onChanged: (value) {
                       _currentWeight = double.tryParse(value) ?? 0;
@@ -341,6 +356,7 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
                   child: TextField(
                     controller: _repsController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     decoration: const InputDecoration(
                       labelText: 'Reps Completed',
                       border: OutlineInputBorder(),
@@ -421,8 +437,8 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
                         child: Center(
                           child: Text(
                             '${set.setNumber}',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onPrimary,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -430,7 +446,7 @@ class _WeightTestExecutionScreenState extends State<WeightTestExecutionScreen> {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: Text('${set.weight}lbs × ${set.reps} reps'),
+                        child: Text('${set.weight}$_unit × ${set.reps} reps'),
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -529,6 +545,9 @@ class WeightTestResultsScreen extends StatelessWidget {
     required this.completedSets,
   });
 
+  String get _unit =>
+      UserPreferencesService().getWeightUnitLabel().toLowerCase();
+
   @override
   Widget build(BuildContext context) {
     // Calculate 1RM and working weight
@@ -569,12 +588,12 @@ class WeightTestResultsScreen extends StatelessWidget {
                     const SizedBox(height: 16),
                     if (oneRepMax != null) ...[
                       Text(
-                          'Estimated 1RM: ${oneRepMax.toStringAsFixed(1)} lbs'),
+                          'Estimated 1RM: ${oneRepMax.toStringAsFixed(1)} $_unit'),
                       const SizedBox(height: 8),
                     ],
                     if (workingWeight != null) ...[
                       Text(
-                          'Recommended Working Weight: ${workingWeight.toStringAsFixed(1)} lbs'),
+                          'Recommended Working Weight: ${workingWeight.toStringAsFixed(1)} $_unit'),
                       const SizedBox(height: 8),
                     ],
                     Text('Sets Completed: ${completedSets.length}'),

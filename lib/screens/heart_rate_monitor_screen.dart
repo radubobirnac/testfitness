@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -24,6 +27,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
   bool _isScanning = false;
   String _connectedDeviceName = '';
   List<BluetoothDevice> _availableDevices = [];
+  HeartRateConnectionStatus _status = HeartRateConnectionStatus.disconnected;
+
+  // Service stream subscriptions, cancelled in dispose()
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
 
   // Heart rate data
   int _currentHeartRate = 0;
@@ -79,103 +86,161 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
   }
 
   void _initializeHeartRateService() {
-    // Initialize the heart rate service
+    // Initialize the heart rate service (idempotent)
     _heartRateService.initialize();
 
+    // Pick up state if the singleton is already connected/reconnecting
+    _status = _heartRateService.connectionStatus.value;
+    _isConnected = _heartRateService.isConnected;
+    if (_isConnected || _heartRateService.isReconnecting) {
+      _connectedDeviceName = _deviceDisplayName();
+    }
+    if (_heartRateService.liveHeartRate != null) {
+      _currentHeartRate = _heartRateService.liveHeartRate!;
+    }
+
     // Listen to heart rate updates
-    _heartRateService.heartRateStream.listen((heartRate) {
-      if (mounted) {
-        setState(() {
-          _currentHeartRate = heartRate;
-          _heartRateHistory.add(heartRate);
+    _subscriptions.add(_heartRateService.heartRateStream.listen((heartRate) {
+      if (!mounted) return;
+      setState(() {
+        _currentHeartRate = heartRate;
+        _heartRateHistory.add(heartRate);
 
-          // Keep only last 60 readings (1 minute)
-          if (_heartRateHistory.length > 60) {
-            _heartRateHistory.removeAt(0);
-          }
-
-          // Calculate stats
-          if (_heartRateHistory.isNotEmpty) {
-            _maxHeartRate = _heartRateHistory.reduce((a, b) => a > b ? a : b);
-            _minHeartRate = _heartRateHistory.reduce((a, b) => a < b ? a : b);
-            _avgHeartRate = (_heartRateHistory.reduce((a, b) => a + b) /
-                    _heartRateHistory.length)
-                .round();
-          }
-        });
-
-        // Start pulse animation when receiving real data
-        if (!_pulseController.isAnimating) {
-          _pulseController.repeat(reverse: true);
+        // Keep only last 60 readings (1 minute)
+        if (_heartRateHistory.length > 60) {
+          _heartRateHistory.removeAt(0);
         }
+
+        // Calculate stats
+        if (_heartRateHistory.isNotEmpty) {
+          _maxHeartRate = _heartRateHistory.reduce((a, b) => a > b ? a : b);
+          _minHeartRate = _heartRateHistory.reduce((a, b) => a < b ? a : b);
+          _avgHeartRate = (_heartRateHistory.reduce((a, b) => a + b) /
+                  _heartRateHistory.length)
+              .round();
+        }
+      });
+
+      // Start pulse animation when receiving real data
+      if (!_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
       }
-    });
+    }));
+
+    // Detailed link status (connected / stale / reconnecting / disconnected)
+    _subscriptions
+        .add(_heartRateService.connectionStatusStream.listen((status) {
+      if (!mounted) return;
+      final previous = _status;
+      setState(() => _status = status);
+
+      if (status != HeartRateConnectionStatus.connected) {
+        // Don't animate a BPM that isn't live.
+        _pulseController.stop();
+        _pulseController.value = 0;
+      }
+
+      if (status == HeartRateConnectionStatus.connected &&
+          previous == HeartRateConnectionStatus.reconnecting) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Reconnected to ${_deviceDisplayName()}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } else if (status == HeartRateConnectionStatus.disconnected &&
+          previous == HeartRateConnectionStatus.reconnecting) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Heart rate monitor lost. Check the strap and scan again.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    }));
 
     // Listen to connection status
-    _heartRateService.connectionStream.listen((isConnected) {
-      if (mounted) {
-        setState(() {
-          _isConnected = isConnected;
-          if (!isConnected) {
-            _connectedDeviceName = '';
-            _currentHeartRate = 0;
-            _heartRateHistory.clear();
-            _maxHeartRate = 0;
-            _minHeartRate = 0;
-            _avgHeartRate = 0;
-            _pulseController.stop();
+    _subscriptions.add(_heartRateService.connectionStream.listen((isConnected) {
+      if (!mounted) return;
+      setState(() {
+        _isConnected = isConnected;
+        if (isConnected) {
+          _connectedDeviceName = _deviceDisplayName();
+        } else if (!_heartRateService.isReconnecting) {
+          // Real disconnect: reset the session view. While reconnecting we
+          // keep the device name and stats so the session can resume.
+          _connectedDeviceName = '';
+          _currentHeartRate = 0;
+          _heartRateHistory.clear();
+          _maxHeartRate = 0;
+          _minHeartRate = 0;
+          _avgHeartRate = 0;
+        }
+      });
+      if (!isConnected) _pulseController.stop();
+    }));
+
+    // Listen to discovered devices
+    _subscriptions.add(_heartRateService.devicesStream.listen((devices) {
+      if (!mounted) return;
+      setState(() {
+        _availableDevices = devices;
+      });
+
+      // Show device selection if devices found and scanning
+      if (devices.isNotEmpty && _isScanning) {
+        // Add a small delay to ensure UI is ready
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && _isScanning) {
+            _showDeviceSelectionDialog();
           }
         });
       }
-    });
+    }));
 
-    // Listen to discovered devices
-    _heartRateService.devicesStream.listen((devices) {
-      if (mounted) {
-        AppLogger.info('📱 UI received ${devices.length} devices from service');
-        setState(() {
-          _availableDevices = devices;
-        });
-
-        // Show device selection if devices found and scanning
-        if (devices.isNotEmpty && _isScanning) {
-          AppLogger.info(
-              '🔍 Auto-showing device selection dialog for ${devices.length} devices');
-          // Add a small delay to ensure UI is ready
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted && _isScanning) {
-              _showDeviceSelectionDialog();
-            }
-          });
-        }
-      }
-    });
-
-    // Listen to debug logs
-    _heartRateService.debugStream.listen((logs) {
-      if (mounted) {
+    // Listen to debug logs (only populated in debug builds)
+    if (kDebugMode) {
+      _subscriptions.add(_heartRateService.debugStream.listen((logs) {
+        if (!mounted) return;
         setState(() {
           _debugLogs = logs;
         });
-      }
-    });
+      }));
+    }
   }
+
+  String _deviceDisplayName() {
+    final name = _heartRateService.connectedDeviceName;
+    return name.isNotEmpty ? name : 'Heart Rate Monitor';
+  }
+
+  bool get _hasLink =>
+      _isConnected || _status == HeartRateConnectionStatus.reconnecting;
+
+  bool get _isLive => _status == HeartRateConnectionStatus.connected;
 
   @override
   void dispose() {
-    AppLogger.info('❤️ Heart Rate Monitor Screen: Disposing');
+    AppLogger.info('Heart Rate Monitor Screen: Disposing');
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    _subscriptions.clear();
     _pulseController.dispose();
     _scanController.dispose();
-    // DON'T dispose the heart rate service - it's a singleton that should persist across screens
-    // _heartRateService.dispose(); // ❌ This was causing disconnections when navigating away
-    AppLogger.info('❤️ Heart Rate Monitor Screen: Disposed');
+    // DON'T dispose the heart rate service - it's a singleton that should
+    // persist across screens (disposing it disconnects the strap).
     super.dispose();
   }
 
   void _startScanning() async {
+    if (!mounted) return;
     setState(() {
       _isScanning = true;
-      _availableDevices.clear();
+      _availableDevices = [];
     });
 
     _scanController.repeat();
@@ -275,6 +340,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
   }
 
   void _stopScanning() async {
+    if (!mounted) return;
     setState(() {
       _isScanning = false;
     });
@@ -485,8 +551,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                        'Connection Status: ${_isConnected ? "✅ Connected" : "❌ Disconnected"}'),
+                    Text('Connection Status: ${_status.name}'),
                     Text(
                         'Connected Device: ${_connectedDeviceName.isEmpty ? "None" : _connectedDeviceName}'),
                     Text('Current Heart Rate: $_currentHeartRate BPM'),
@@ -585,15 +650,16 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
         appBar: AppBar(
           title: const Text('Heart Rate Monitor'),
           actions: [
-            // Debug button to show logs
-            IconButton(
-              icon: const Icon(Icons.bug_report),
-              onPressed: () {
-                _showDebugInfo();
-              },
-              tooltip: 'Debug Info',
-            ),
-            if (_isConnected)
+            // Debug button to show logs (debug builds only)
+            if (kDebugMode)
+              IconButton(
+                icon: const Icon(Icons.bug_report),
+                onPressed: () {
+                  _showDebugInfo();
+                },
+                tooltip: 'Debug Info',
+              ),
+            if (_hasLink)
               IconButton(
                 icon: const Icon(Icons.bluetooth_disabled),
                 onPressed: _disconnectDevice,
@@ -607,9 +673,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
             children: [
               _buildConnectionSection(),
               const SizedBox(height: 24),
-              if (_isConnected) _buildHeartRateDisplay(),
-              if (_isConnected) const SizedBox(height: 24),
-              if (_isConnected) _buildStatsSection(),
+              if (_hasLink) _buildHeartRateDisplay(),
+              if (_hasLink) const SizedBox(height: 24),
+              if (_hasLink) _buildStatsSection(),
               const Spacer(),
               _buildInstructionsSection(),
             ],
@@ -631,17 +697,13 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
           child: Column(
             children: [
               Icon(
-                _isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
+                _connectionIcon(),
                 size: 48,
-                color: _isConnected
-                    ? Colors.green
-                    : Theme.of(context).colorScheme.primary,
+                color: _connectionColor(),
               ),
               const SizedBox(height: 16),
               Text(
-                _isConnected
-                    ? 'Connected to $_connectedDeviceName'
-                    : 'No Device Connected',
+                _connectionTitle(),
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
@@ -649,7 +711,29 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              if (!_isConnected && !_isScanning) ...[
+              if (_status == HeartRateConnectionStatus.reconnecting) ...[
+                const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Signal lost. Trying to reconnect...',
+                  style: TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              if (_status == HeartRateConnectionStatus.stale)
+                Text(
+                  'No heart rate data for '
+                  '${HeartRateService.staleTimeout.inSeconds}s. '
+                  'Check the strap is moist and snug.',
+                  style: const TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+              if (!_hasLink && !_isScanning) ...[
                 ElevatedButton.icon(
                   onPressed: _startScanning,
                   icon: const Icon(Icons.search),
@@ -705,6 +789,51 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
     );
   }
 
+  IconData _connectionIcon() {
+    switch (_status) {
+      case HeartRateConnectionStatus.connected:
+        return Icons.bluetooth_connected;
+      case HeartRateConnectionStatus.stale:
+        return Icons.signal_cellular_connected_no_internet_0_bar;
+      case HeartRateConnectionStatus.reconnecting:
+      case HeartRateConnectionStatus.connecting:
+        return Icons.bluetooth_searching;
+      case HeartRateConnectionStatus.disconnected:
+        return Icons.bluetooth;
+    }
+  }
+
+  Color _connectionColor() {
+    switch (_status) {
+      case HeartRateConnectionStatus.connected:
+        return Colors.greenAccent;
+      case HeartRateConnectionStatus.stale:
+      case HeartRateConnectionStatus.reconnecting:
+        return Colors.amberAccent;
+      case HeartRateConnectionStatus.connecting:
+      case HeartRateConnectionStatus.disconnected:
+        return Colors.white70;
+    }
+  }
+
+  String _connectionTitle() {
+    final name = _connectedDeviceName.isEmpty
+        ? 'Heart Rate Monitor'
+        : _connectedDeviceName;
+    switch (_status) {
+      case HeartRateConnectionStatus.connected:
+        return 'Connected to $name';
+      case HeartRateConnectionStatus.stale:
+        return '$name: no signal';
+      case HeartRateConnectionStatus.reconnecting:
+        return 'Disconnected, reconnecting to $name...';
+      case HeartRateConnectionStatus.connecting:
+        return 'Connecting...';
+      case HeartRateConnectionStatus.disconnected:
+        return 'No Device Connected';
+    }
+  }
+
   Widget _buildHeartRateDisplay() {
     return Card(
       child: Padding(
@@ -738,7 +867,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          '$_currentHeartRate',
+                          _isLive && _currentHeartRate > 0
+                              ? '$_currentHeartRate'
+                              : '--',
                           style: Theme.of(context)
                               .textTheme
                               .headlineLarge
@@ -764,7 +895,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
             ),
             const SizedBox(height: 16),
             Text(
-              _getHeartRateZone(),
+              _isLive
+                  ? _getHeartRateZone()
+                  : (_status == HeartRateConnectionStatus.reconnecting
+                      ? 'Reconnecting...'
+                      : 'No live reading'),
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     color: _getHeartRateColor(),
                     fontWeight: FontWeight.bold,
@@ -907,6 +1042,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen>
   }
 
   Color _getHeartRateColor() {
+    if (!_isLive) return Colors.grey;
     if (_currentHeartRate < 60) return Colors.blue;
     if (_currentHeartRate < 100) return Colors.green;
     if (_currentHeartRate < 140) return Colors.orange;

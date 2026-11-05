@@ -265,7 +265,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
                   child: Text(
                     title,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey[600],
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -444,7 +444,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         Text(
           '$sets sets',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
         ),
       ],
@@ -496,7 +496,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
               Text(
                 'Complete your first workout to unlock achievements!',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey[600],
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
               )
             else
@@ -1335,9 +1335,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
+                  Text(
                     'Powered by Gemini 2.5 Flash Lite',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Text(insights),

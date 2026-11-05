@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:testfitness/services/boxing_audio_controller.dart';
 import 'package:testfitness/utils/app_logger.dart';
 
@@ -7,9 +8,7 @@ import 'package:testfitness/utils/app_logger.dart';
 /// Generates and calls out boxing combinations with high-quality audio
 class BoxingService {
   static BoxingService? _instance;
-  final BoxingAudioController _audioController = BoxingAudioController();
-  Timer? _roundTimer;
-  Timer? _restTimer;
+  Timer? _phaseTimer; // Round or rest timer (only one phase runs at a time)
   Timer? _combinationTimer;
 
   // Boxing styles and their progressive combination chains
@@ -219,11 +218,63 @@ class BoxingService {
   int _roundStartTime = 0;
   String _currentStyle = 'traditional'; // Default to traditional style
 
-  BoxingService._internal();
+  // Session state machine
+  final BoxingAudio _audio;
+  final DateTime Function() _now;
+  _BoxingSessionConfig? _config;
+  BoxingPhase _phase = BoxingPhase.idle;
+  bool _isPaused = false;
+  int _currentRound = 0;
+
+  /// Incremented whenever a session is started or stopped so that async
+  /// continuations (countdown, round announcement) from a stale session bail.
+  int _sessionToken = 0;
+
+  /// Wall-clock time at which the current round/rest phase ends.
+  DateTime? _phaseEndsAt;
+
+  /// Remaining time of the current phase, captured when paused.
+  Duration? _pausedRemaining;
+  DateTime? _pausedAt;
+
+  BoxingService._internal(this._audio, this._now);
 
   factory BoxingService() {
-    _instance ??= BoxingService._internal();
+    _instance ??= BoxingService._internal(
+        _ControllerBoxingAudio(BoxingAudioController()), DateTime.now);
     return _instance!;
+  }
+
+  /// Creates a standalone (non-singleton) instance with injected audio and
+  /// clock, for tests.
+  @visibleForTesting
+  factory BoxingService.test({
+    required BoxingAudio audio,
+    DateTime Function()? now,
+  }) =>
+      BoxingService._internal(audio, now ?? DateTime.now);
+
+  /// Current phase of the session.
+  BoxingPhase get phase => _phase;
+
+  /// Whether the session is paused.
+  bool get isPaused => _isPaused;
+
+  /// Round currently in progress (or the round just finished while resting).
+  int get currentRound => _currentRound;
+
+  /// Time left in the current round/rest phase, or null when not timing.
+  Duration? get phaseRemaining {
+    if (_isPaused) return _pausedRemaining;
+    if (_phaseEndsAt == null) return null;
+    return _remainingAt(_now());
+  }
+
+  Duration _remainingAt(DateTime time) {
+    final endsAt = _phaseEndsAt;
+    if (endsAt == null) return Duration.zero;
+    final remaining = endsAt.difference(time);
+    return remaining.isNegative ? Duration.zero : remaining;
   }
 
   /// Start a boxing cardio session
@@ -237,32 +288,41 @@ class BoxingService {
     required Function(int) onRoundComplete,
     required Function() onSessionComplete,
     required Function(int) onRestStart,
+    Function(int)? onRoundStart,
     int combinationIntervalSeconds = 4,
   }) async {
     try {
       AppLogger.info(
           'Starting boxing session: $style $difficulty, $totalRounds rounds');
 
-      // Set current style
+      // Make sure nothing from a previous session is still running.
+      _cancelAllTimers();
+      final token = ++_sessionToken;
+
       _currentStyle = style;
-      int currentRound = 1;
-
-      // Countdown before starting
-      await _audioController.playCountdown();
-
-      await _startRound(
-        style: style,
+      _config = _BoxingSessionConfig(
         difficulty: difficulty,
-        roundDurationSeconds: roundDurationSeconds,
-        restDurationSeconds: restDurationSeconds,
-        currentRound: currentRound,
+        roundDuration: Duration(seconds: roundDurationSeconds),
+        restDuration: Duration(seconds: restDurationSeconds),
         totalRounds: totalRounds,
+        combinationInterval: Duration(seconds: combinationIntervalSeconds),
         onCombinationCall: onCombinationCall,
         onRoundComplete: onRoundComplete,
         onSessionComplete: onSessionComplete,
         onRestStart: onRestStart,
-        combinationIntervalSeconds: combinationIntervalSeconds,
+        onRoundStart: onRoundStart,
       );
+      _phase = BoxingPhase.countdown;
+      _isPaused = false;
+      _pausedRemaining = null;
+      _pausedAt = null;
+      _currentRound = 0;
+
+      // Countdown before starting
+      await _audio.playCountdown();
+      if (token != _sessionToken) return; // Stopped during countdown
+
+      await _beginRound(1, token);
     } catch (e) {
       AppLogger.error('Failed to start boxing session', e);
       rethrow;
@@ -270,79 +330,87 @@ class BoxingService {
   }
 
   /// Start a single round
-  Future<void> _startRound({
-    required String style,
-    required String difficulty,
-    required int roundDurationSeconds,
-    required int restDurationSeconds,
-    required int currentRound,
-    required int totalRounds,
-    required Function(String) onCombinationCall,
-    required Function(int) onRoundComplete,
-    required Function() onSessionComplete,
-    required Function(int) onRestStart,
-    required int combinationIntervalSeconds,
-  }) async {
-    // Initialize progressive combination state for new round
+  Future<void> _beginRound(int round, int token) async {
+    final config = _config;
+    if (config == null || token != _sessionToken) return;
+
+    _currentRound = round;
+    _phase = BoxingPhase.round;
+    _phaseEndsAt = null;
     _initializeProgressiveRound();
+    config.onRoundStart?.call(round);
 
     // Announce round start using high-quality audio
-    await _audioController.announceRoundStart(currentRound);
+    await _audio.announceRoundStart(round);
+    if (token != _sessionToken) return;
 
-    // Start calling progressive combinations during the round
-    _startProgressiveCombinationCalls(difficulty, onCombinationCall,
-        intervalSeconds: combinationIntervalSeconds);
+    if (_isPaused) {
+      // Paused during countdown/announcement: start the round frozen.
+      _pausedRemaining = config.roundDuration;
+      _pausedAt = _now();
+      return;
+    }
 
-    // Set round timer
-    _roundTimer = Timer(Duration(seconds: roundDurationSeconds), () async {
+    _schedulePhaseEnd(config.roundDuration);
+    _startProgressiveCombinationCalls();
+  }
+
+  /// (Re)arm the single phase timer. Always cancels any previous one first.
+  void _schedulePhaseEnd(Duration duration) {
+    _phaseTimer?.cancel();
+    _phaseEndsAt = _now().add(duration);
+    final token = _sessionToken;
+    _phaseTimer = Timer(duration, () => _onPhaseEnded(token));
+  }
+
+  void _onPhaseEnded(int token) {
+    _phaseTimer = null;
+    _phaseEndsAt = null;
+    final config = _config;
+    if (config == null || token != _sessionToken || _isPaused) return;
+
+    if (_phase == BoxingPhase.round) {
       _stopCombinationCalls();
       // NO round complete announcement - user wants minimal audio
-      onRoundComplete(currentRound);
+      config.onRoundComplete(_currentRound);
 
-      if (currentRound < totalRounds) {
-        // Start rest period
-        onRestStart(restDurationSeconds);
-        // NO rest announcement - user wants minimal audio
-
-        _restTimer = Timer(Duration(seconds: restDurationSeconds), () async {
-          await _startRound(
-            style: style,
-            difficulty: difficulty,
-            roundDurationSeconds: roundDurationSeconds,
-            restDurationSeconds: restDurationSeconds,
-            currentRound: currentRound + 1,
-            totalRounds: totalRounds,
-            onCombinationCall: onCombinationCall,
-            onRoundComplete: onRoundComplete,
-            onSessionComplete: onSessionComplete,
-            onRestStart: onRestStart,
-            combinationIntervalSeconds: combinationIntervalSeconds,
-          );
-        });
+      if (_currentRound < config.totalRounds) {
+        _phase = BoxingPhase.rest;
+        config.onRestStart(config.restDuration.inSeconds);
+        _schedulePhaseEnd(config.restDuration);
       } else {
-        // Session complete - NO announcement
-        onSessionComplete();
+        _phase = BoxingPhase.complete;
+        _config = null;
+        config.onSessionComplete();
       }
-    });
+    } else if (_phase == BoxingPhase.rest) {
+      _beginRound(_currentRound + 1, token);
+    }
   }
 
   /// Initialize progressive combination state for a new round
   void _initializeProgressiveRound() {
     _currentChainIndex = 0;
-    _roundStartTime = DateTime.now().millisecondsSinceEpoch;
+    _roundStartTime = _now().millisecondsSinceEpoch;
   }
 
-  /// Start calling out progressive combinations at intervals
-  void _startProgressiveCombinationCalls(
-      String difficulty, Function(String) onCombinationCall,
-      {int intervalSeconds = 4}) {
-    final callInterval = Duration(seconds: intervalSeconds);
-
-    _combinationTimer = Timer.periodic(callInterval, (timer) {
-      final combination = _getNextProgressiveCombination(difficulty);
-
-      onCombinationCall(combination);
-      _audioController.callCombination(combination);
+  /// Start calling out progressive combinations at intervals.
+  /// Always cancels any previous combination timer first.
+  void _startProgressiveCombinationCalls() {
+    final config = _config;
+    if (config == null) return;
+    _combinationTimer?.cancel();
+    final token = _sessionToken;
+    _combinationTimer = Timer.periodic(config.combinationInterval, (timer) {
+      if (token != _sessionToken ||
+          _isPaused ||
+          _phase != BoxingPhase.round) {
+        timer.cancel();
+        return;
+      }
+      final combination = _getNextProgressiveCombination(config.difficulty);
+      config.onCombinationCall(combination);
+      _audio.callCombination(combination);
     });
   }
 
@@ -356,7 +424,7 @@ class BoxingService {
     if (chains.isEmpty) return '1-2'; // Fallback
 
     // Calculate progression based on time elapsed in round
-    final currentTime = DateTime.now().millisecondsSinceEpoch;
+    final currentTime = _now().millisecondsSinceEpoch;
     final elapsedSeconds = (currentTime - _roundStartTime) / 1000;
 
     // Get current chain
@@ -384,31 +452,68 @@ class BoxingService {
     _combinationTimer = null;
   }
 
-  /// Stop the current boxing session
+  void _cancelAllTimers() {
+    _phaseTimer?.cancel();
+    _phaseTimer = null;
+    _stopCombinationCalls();
+    _phaseEndsAt = null;
+  }
+
+  /// Stop the current boxing session: cancels every timer, invalidates any
+  /// pending async continuation and silences TTS.
   void stopSession() {
     AppLogger.info('Stopping boxing session');
-    _roundTimer?.cancel();
-    _restTimer?.cancel();
-    _combinationTimer?.cancel();
-
-    _roundTimer = null;
-    _restTimer = null;
-    _combinationTimer = null;
+    _sessionToken++;
+    _cancelAllTimers();
+    _config = null;
+    _phase = BoxingPhase.idle;
+    _isPaused = false;
+    _pausedRemaining = null;
+    _pausedAt = null;
+    _currentRound = 0;
+    _audio.stopAll();
   }
 
-  /// Pause the current session
+  /// Pause the current session, freezing the round/rest clock.
   void pauseSession() {
+    if (_isPaused) return;
+    if (_phase != BoxingPhase.countdown &&
+        _phase != BoxingPhase.round &&
+        _phase != BoxingPhase.rest) {
+      return;
+    }
     AppLogger.info('Pausing boxing session');
-    _combinationTimer?.cancel();
-    _combinationTimer = null;
+    final now = _now();
+    _isPaused = true;
+    _pausedAt = now;
+    // Null while still in countdown; _beginRound fills it in that case.
+    _pausedRemaining = _phaseTimer != null ? _remainingAt(now) : null;
+    _cancelAllTimers();
+    _audio.stopAll();
   }
 
-  /// Resume the current session
-  void resumeSession(String difficulty, Function(String) onCombinationCall,
-      {int intervalSeconds = 4}) {
+  /// Resume a paused session from where the current phase was frozen.
+  void resumeSession() {
+    if (!_isPaused) return;
     AppLogger.info('Resuming boxing session');
-    _startProgressiveCombinationCalls(difficulty, onCombinationCall,
-        intervalSeconds: intervalSeconds);
+    _isPaused = false;
+
+    final pausedAt = _pausedAt;
+    if (pausedAt != null) {
+      // Shift the combination progression so paused time doesn't count.
+      _roundStartTime += _now().difference(pausedAt).inMilliseconds;
+    }
+    final remaining = _pausedRemaining;
+    _pausedRemaining = null;
+    _pausedAt = null;
+
+    // Still in countdown: _beginRound will start the round normally.
+    if (remaining == null) return;
+
+    _schedulePhaseEnd(remaining);
+    if (_phase == BoxingPhase.round) {
+      _startProgressiveCombinationCalls();
+    }
   }
 
   /// Get available boxing styles
@@ -455,7 +560,7 @@ class BoxingService {
   /// Dispose of the service
   void dispose() {
     stopSession();
-    _instance = null;
+    if (identical(_instance, this)) _instance = null;
   }
 }
 
@@ -466,4 +571,57 @@ class BoxingServiceException implements Exception {
 
   @override
   String toString() => 'BoxingServiceException: $message';
+}
+
+/// Phases of a boxing session.
+enum BoxingPhase { idle, countdown, round, rest, complete }
+
+/// Audio output used by [BoxingService]; abstracted so it can be faked in tests.
+abstract class BoxingAudio {
+  Future<void> playCountdown();
+  Future<void> announceRoundStart(int roundNumber);
+  Future<void> callCombination(String combination);
+  Future<void> stopAll();
+}
+
+class _ControllerBoxingAudio implements BoxingAudio {
+  final BoxingAudioController _controller;
+  _ControllerBoxingAudio(this._controller);
+
+  @override
+  Future<void> playCountdown() => _controller.playCountdown();
+  @override
+  Future<void> announceRoundStart(int roundNumber) =>
+      _controller.announceRoundStart(roundNumber);
+  @override
+  Future<void> callCombination(String combination) =>
+      _controller.callCombination(combination);
+  @override
+  Future<void> stopAll() => _controller.stopAll();
+}
+
+class _BoxingSessionConfig {
+  final String difficulty;
+  final Duration roundDuration;
+  final Duration restDuration;
+  final int totalRounds;
+  final Duration combinationInterval;
+  final Function(String) onCombinationCall;
+  final Function(int) onRoundComplete;
+  final Function() onSessionComplete;
+  final Function(int) onRestStart;
+  final Function(int)? onRoundStart;
+
+  _BoxingSessionConfig({
+    required this.difficulty,
+    required this.roundDuration,
+    required this.restDuration,
+    required this.totalRounds,
+    required this.combinationInterval,
+    required this.onCombinationCall,
+    required this.onRoundComplete,
+    required this.onSessionComplete,
+    required this.onRestStart,
+    this.onRoundStart,
+  });
 }

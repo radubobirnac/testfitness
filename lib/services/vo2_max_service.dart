@@ -21,6 +21,9 @@ class VO2MaxService {
   bool _isCoachingActive = false;
   DateTime? _lastCoachingMessage;
 
+  /// Whether a coaching session is in progress.
+  bool get isCoachingActive => _isCoachingActive;
+
   // Streams
   Stream<String> get coachingStream => _coachingController.stream;
   Stream<HeartRateZoneStatus> get zoneStream => _zoneController.stream;
@@ -36,6 +39,7 @@ class VO2MaxService {
   /// Start VO2 max coaching session
   void startCoaching() {
     _isCoachingActive = true;
+    _lastCoachingMessage = null;
     _coachingController.add(
         'VO2 Max training started! Target your 95% max heart rate zone for optimal results.');
     AppLogger.info('VO2 Max coaching session started');
@@ -43,7 +47,9 @@ class VO2MaxService {
 
   /// Stop VO2 max coaching session
   void stopCoaching() {
+    if (!_isCoachingActive) return;
     _isCoachingActive = false;
+    _lastCoachingMessage = null;
     _coachingController.add('VO2 Max training session complete. Great work!');
     AppLogger.info('VO2 Max coaching session stopped');
   }

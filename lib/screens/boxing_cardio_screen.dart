@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:testfitness/services/boxing_service.dart';
@@ -46,6 +48,9 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
   bool _isResting = false;
   int _currentRound = 0;
   String _currentCombination = '';
+
+  StreamSubscription<int>? _heartRateSubscription;
+  StreamSubscription<bool>? _connectionSubscription;
 
   // Animation controllers
   late AnimationController _pulseController;
@@ -104,7 +109,8 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
     _heartRateService.initialize();
 
     // Listen to heart rate updates (automatically track when connected and session active)
-    _heartRateService.heartRateStream.listen((heartRate) {
+    _heartRateSubscription =
+        _heartRateService.heartRateStream.listen((heartRate) {
       if (mounted && _heartRateService.isConnected && _isSessionActive) {
         setState(() {
           _currentHeartRate = heartRate;
@@ -165,7 +171,8 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
     });
 
     // Listen to connection status changes
-    _heartRateService.connectionStream.listen((isConnected) {
+    _connectionSubscription =
+        _heartRateService.connectionStream.listen((isConnected) {
       if (mounted) {
         setState(() {
           if (!isConnected) {
@@ -182,9 +189,12 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
   @override
   void dispose() {
     AppLogger.info('🥊 Boxing Cardio Screen: Disposing');
+    _heartRateSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    // Cancels every timer, drops the registered callbacks and stops TTS.
+    _boxingService.stopSession();
     _pulseController.dispose();
     _combinationController.dispose();
-    _boxingService.stopSession();
     // Note: NOT disposing heart rate service - it's a singleton that persists across screens
     AppLogger.info('🥊 Boxing Cardio Screen: Disposed');
     super.dispose();
@@ -199,6 +209,7 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
       setState(() {
         _isSessionActive = true;
         _isPaused = false;
+        _isResting = false;
         _currentRound = 1;
         _currentCombination = 'Get Ready!';
 
@@ -221,17 +232,48 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
         onRoundComplete: _onRoundComplete,
         onSessionComplete: _onSessionComplete,
         onRestStart: _onRestStart,
+        onRoundStart: _onRoundStart,
         combinationIntervalSeconds: _combinationInterval,
       );
     } catch (e) {
       AppLogger.error('Failed to start boxing session', e);
+      if (!mounted) return;
       _showErrorSnackBar('Failed to start boxing session: ${e.toString()}');
+    }
+  }
+
+  /// Ask before ending an active session (the stop button is easy to hit
+  /// mid-workout).
+  Future<void> _confirmStopSession() async {
+    if (!_isSessionActive) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('End session?'),
+        content: const Text(
+            'Your boxing session is still in progress. Do you want to end it now?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Keep going'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('End session'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted && _isSessionActive) {
+      _stopSession();
     }
   }
 
   void _stopSession() {
     HapticFeedback.mediumImpact();
     _boxingService.stopSession();
+    if (!mounted) return;
     setState(() {
       _isSessionActive = false;
       _isPaused = false;
@@ -244,38 +286,46 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
   void _pauseSession() {
     HapticFeedback.lightImpact();
     if (_isPaused) {
-      _boxingService.resumeSession(_selectedDifficulty, _onCombinationCall,
-          intervalSeconds: _combinationInterval);
+      _boxingService.resumeSession();
     } else {
       _boxingService.pauseSession();
     }
 
     setState(() {
-      _isPaused = !_isPaused;
+      _isPaused = _boxingService.isPaused;
     });
   }
 
   void _onCombinationCall(String combination) {
+    if (!mounted) return;
     setState(() {
       _currentCombination = combination;
     });
 
     _combinationController.forward().then((_) {
-      _combinationController.reset();
+      if (mounted) _combinationController.reset();
     });
 
     HapticFeedback.lightImpact();
   }
 
-  void _onRoundComplete(int round) {
+  /// A new round begins: leave rest styling and show the new round number.
+  void _onRoundStart(int round) {
+    if (!mounted) return;
     setState(() {
       _currentRound = round;
+      _isResting = false;
+      _currentCombination = round == 1 ? 'Get Ready!' : 'Round $round';
     });
+  }
+
+  void _onRoundComplete(int round) {
+    if (!mounted) return;
     HapticFeedback.heavyImpact();
   }
 
   void _onRestStart(int restSeconds) {
-    if (restSeconds < 0) return;
+    if (!mounted || restSeconds < 0) return;
     setState(() {
       _isResting = true;
       _currentCombination = 'Rest Time';
@@ -283,6 +333,7 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
   }
 
   void _onSessionComplete() {
+    if (!mounted) return;
     setState(() {
       _isSessionActive = false;
       _isPaused = false;
@@ -330,7 +381,7 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
             if (_isSessionActive)
               IconButton(
                 icon: const Icon(Icons.stop),
-                onPressed: _stopSession,
+                onPressed: _confirmStopSession,
                 tooltip: 'Stop Session',
               ),
           ],
@@ -565,7 +616,7 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
                   TextButton(
                     onPressed: () async {
                       await Navigator.pushNamed(context, '/heart-rate-monitor');
-                      setState(() {}); // Refresh UI after returning
+                      if (mounted) setState(() {}); // Refresh UI after returning
                     },
                     child: Text(
                       'Connect',
@@ -579,7 +630,7 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
                   TextButton(
                     onPressed: () async {
                       await Navigator.pushNamed(context, '/heart-rate-monitor');
-                      setState(() {}); // Refresh UI after returning
+                      if (mounted) setState(() {}); // Refresh UI after returning
                     },
                     child: Text(
                       'Manage',
@@ -955,7 +1006,7 @@ class _BoxingCardioScreenState extends State<BoxingCardioScreen>
         const SizedBox(width: 16),
         Expanded(
           child: ElevatedButton.icon(
-            onPressed: _stopSession,
+            onPressed: _confirmStopSession,
             icon: const Icon(Icons.stop),
             label: const Text('STOP'),
             style: ElevatedButton.styleFrom(
