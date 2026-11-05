@@ -569,346 +569,106 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                                 itemBuilder: (context, index) {
                                   final workout = sortedWorkouts[index];
                                   // Get unique exercise IDs to count exercises
-                                    final uniqueExercises =
-                                        workout.exerciseIds.toList();
+                                  final uniqueExercises =
+                                      workout.exerciseIds.toList();
 
                                   return AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
                                     curve: Curves.easeInOut,
-                                    child: Card(
-                                      elevation: 2,
-                                      margin:
-                                          const EdgeInsets.only(bottom: 16.0),
-                                      child: Stack(
-                                        children: [
-                                          // Main card content
-                                          Material(
-                                            color: Colors.transparent,
-                                            child: InkWell(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              onTap: () {
-                                                // Navigate to the workout editing screen instead of detail view
-                                                Navigator.push(
-                                                  context,
-                                                  PageRouteBuilder(
-                                                    pageBuilder: (context,
-                                                            animation,
-                                                            secondaryAnimation) =>
-                                                        ExerciseDetailScreen
-                                                            .editWorkout(
-                                                      workoutId: workout.id,
-                                                    ),
-                                                    transitionsBuilder:
-                                                        (context,
-                                                            animation,
-                                                            secondaryAnimation,
-                                                            child) {
-                                                      const begin =
-                                                          Offset(1.0, 0.0);
-                                                      const end = Offset.zero;
-                                                      const curve =
-                                                          Curves.easeInOut;
-
-                                                      var tween = Tween(
-                                                              begin: begin,
-                                                              end: end)
-                                                          .chain(
-                                                        CurveTween(
-                                                            curve: curve),
-                                                      );
-
-                                                      return SlideTransition(
-                                                        position: animation
-                                                            .drive(tween),
-                                                        child: child,
-                                                      );
-                                                    },
-                                                  ),
-                                                ).then((_) {
-                                                  // Reload workouts after returning
-                                                  if (context.mounted) {
-                                                    context.read<WorkoutBloc>().add(
-                                                        const WorkoutLoadRequested());
-                                                  }
-                                                });
-                                              },
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.all(16.0),
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    // Workout Name without status indicator chip
-                                                    Text(
-                                                      workout.name,
-                                                      style: Theme.of(context)
-                                                          .textTheme
-                                                          .titleLarge,
-                                                    ),
-
-                                                    // Description if available
-                                                    if (workout.description !=
-                                                            null &&
-                                                        workout.description!
-                                                            .trim()
-                                                            .isNotEmpty &&
-                                                        workout.description !=
-                                                            _importedFromCsvLabel) ...[
-                                                      const SizedBox(height: 8),
-                                                      Text(
-                                                        workout.description!,
-                                                        style: Theme.of(context)
-                                                            .textTheme
-                                                            .bodyMedium,
-                                                      ),
-                                                    ],
-
-                                                    const SizedBox(height: 16),
-
-                                                    // Stats row
-                                                    Row(
-                                                      mainAxisAlignment:
-                                                          MainAxisAlignment
-                                                              .spaceBetween,
-                                                      children: [
-                                                        // Exercise count
-                                                        Chip(
-                                                          avatar: const Icon(
-                                                            Icons
-                                                                .fitness_center,
-                                                            size: 16,
-                                                          ),
-                                                          label: Text(
-                                                            '${uniqueExercises.length} ${uniqueExercises.length == 1 ? 'exercise' : 'exercises'}',
-                                                          ),
-                                                        ),
-
-                                                        // Set count
-                                                        Chip(
-                                                          avatar: const Icon(
-                                                            Icons.repeat,
-                                                            size: 16,
-                                                          ),
-                                                          label: Text(
-                                                            '${workout.sets.length} ${workout.sets.length == 1 ? 'set' : 'sets'}',
-                                                          ),
-                                                        ),
-
-                                                        // Date info - use the same date as sorting
-                                                        Chip(
-                                                          avatar: Icon(
-                                                            workout.isCompleted
-                                                                ? Icons
-                                                                    .calendar_today
-                                                                : Icons.event,
-                                                            size: 16,
-                                                          ),
-                                                          label: Text(
-                                                            DateFormat('MMM d')
-                                                                .format(
-                                                                    _displayDateForWorkout(
-                                                                        workout)),
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
+                                    child: WorkoutListCard(
+                                      workout: workout,
+                                      exerciseCount: uniqueExercises.length,
+                                      displayDate:
+                                          _displayDateForWorkout(workout),
+                                      showDescription:
+                                          workout.description != null &&
+                                              workout.description!
+                                                  .trim()
+                                                  .isNotEmpty &&
+                                              workout.description !=
+                                                  _importedFromCsvLabel,
+                                      onTap: () {
+                                        // Navigate to the workout editing screen instead of detail view
+                                        Navigator.push(
+                                          context,
+                                          PageRouteBuilder(
+                                            pageBuilder: (context, animation,
+                                                    secondaryAnimation) =>
+                                                ExerciseDetailScreen
+                                                    .editWorkout(
+                                              workoutId: workout.id,
                                             ),
+                                            transitionsBuilder: (context,
+                                                animation,
+                                                secondaryAnimation,
+                                                child) {
+                                              const begin = Offset(1.0, 0.0);
+                                              const end = Offset.zero;
+                                              const curve = Curves.easeInOut;
+
+                                              var tween = Tween(
+                                                      begin: begin, end: end)
+                                                  .chain(
+                                                CurveTween(curve: curve),
+                                              );
+
+                                              return SlideTransition(
+                                                position:
+                                                    animation.drive(tween),
+                                                child: child,
+                                              );
+                                            },
                                           ),
-
-                                          // Complete checkbox button (positioned in the top-right)
-                                          Positioned(
-                                            top: 8,
-                                            right: 8,
-                                            child: Row(
-                                              children: [
-                                                // Complete checkbox
-                                                IconButton(
-                                                  icon: Icon(
-                                                    workout.isCompleted
-                                                        ? Icons.check_circle
-                                                        : Icons
-                                                            .check_circle_outline,
-                                                    color: workout.isCompleted
-                                                        ? Colors.green
-                                                        : Colors.green
-                                                            .withValues(
-                                                                alpha: 0.7),
-                                                    size:
-                                                        38, // Increased size for better visibility
-                                                  ),
-                                                  tooltip: workout.isCompleted
-                                                      ? 'Mark as incomplete'
-                                                      : 'Mark as complete',
-                                                  onPressed: () {
-                                                    HapticFeedback
-                                                        .mediumImpact();
-                                                    if (workout.isCompleted) {
-                                                      // Uncomplete workout by updating it
-                                                      final updatedWorkout =
-                                                          Workout(
-                                                        id: workout.id,
-                                                        name: workout.name,
-                                                        description:
-                                                            workout.description,
-                                                        scheduledDate: workout
-                                                            .scheduledDate,
-                                                        completedDate: null,
-                                                        isCompleted: false,
-                                                        sets: workout.sets,
-                                                        durationMinutes: workout
-                                                            .durationMinutes,
-                                                        notes: workout.notes,
-                                                      );
-                                                      context
-                                                          .read<WorkoutBloc>()
-                                                          .add(
-                                                            WorkoutUpdateRequested(
-                                                                updatedWorkout),
-                                                          );
-                                                    } else {
-                                                      // Complete workout using BLoC
-                                                      context
-                                                          .read<WorkoutBloc>()
-                                                          .add(
-                                                            WorkoutCompleteRequested(
-                                                                workout.id),
-                                                          );
-                                                    }
-                                                  },
-                                                ),
-
-                                                // Repeat button
-                                                Container(
-                                                  width: 36,
-                                                  height: 36,
-                                                  decoration: BoxDecoration(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .primary,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: IconButton(
-                                                    padding: EdgeInsets.zero,
-                                                    icon: const Icon(
-                                                      Icons.repeat,
-                                                      color: Colors.white,
-                                                      size: 22,
-                                                    ),
-                                                    tooltip:
-                                                        'Repeat this workout',
-                                                    onPressed: () {
-                                                      HapticFeedback
-                                                          .lightImpact();
-                                                      // Duplicate the workout using BLoC
-                                                      context
-                                                          .read<WorkoutBloc>()
-                                                          .add(
-                                                            WorkoutDuplicateRequested(
-                                                                workout.id),
-                                                          );
-                                                    },
-                                                  ),
-                                                ),
-
-                                                const SizedBox(
-                                                    width:
-                                                        8), // Add spacing between buttons
-
-                                                // Delete button
-                                                Container(
-                                                  width: 36,
-                                                  height: 36,
-                                                  decoration:
-                                                      const BoxDecoration(
-                                                    color: Colors.red,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: IconButton(
-                                                    padding: EdgeInsets.zero,
-                                                    icon: const Icon(
-                                                      Icons.delete_outline,
-                                                      color: Colors.white,
-                                                      size: 22,
-                                                    ),
-                                                    onPressed: () {
-                                                      HapticFeedback
-                                                          .heavyImpact();
-                                                      // Show confirmation dialog
-                                                      showDialog(
-                                                        context: context,
-                                                        builder: (context) =>
-                                                            AlertDialog(
-                                                          title: const Text(
-                                                              'Delete Workout'),
-                                                          content: Text(
-                                                            'Are you sure you want to delete "${workout.name}"?',
-                                                          ),
-                                                          actions: [
-                                                            TextButton(
-                                                              onPressed: () =>
-                                                                  Navigator.pop(
-                                                                      context),
-                                                              style: TextButton
-                                                                  .styleFrom(
-                                                                foregroundColor:
-                                                                    Colors.teal[
-                                                                        600], // Use teal instead of white
-                                                                textStyle:
-                                                                    const TextStyle(
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .bold,
-                                                                ),
-                                                              ),
-                                                              child: const Text(
-                                                                  'CANCEL'),
-                                                            ),
-                                                            TextButton(
-                                                              onPressed: () {
-                                                                Navigator.pop(
-                                                                    context);
-
-                                                                // Delete workout using BLoC
-                                                                context
-                                                                    .read<
-                                                                        WorkoutBloc>()
-                                                                    .add(
-                                                                      WorkoutDeleteRequested(
-                                                                          workout
-                                                                              .id),
-                                                                    );
-                                                              },
-                                                              style: TextButton
-                                                                  .styleFrom(
-                                                                foregroundColor:
-                                                                    Colors
-                                                                        .red, // Use red for delete button
-                                                                textStyle:
-                                                                    const TextStyle(
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .bold,
-                                                                ),
-                                                              ),
-                                                              child: const Text(
-                                                                  'DELETE'),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                      );
-                                                    },
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                        ).then((_) {
+                                          // Reload workouts after returning
+                                          if (context.mounted) {
+                                            context.read<WorkoutBloc>().add(
+                                                const WorkoutLoadRequested());
+                                          }
+                                        });
+                                      },
+                                      onToggleComplete: () {
+                                        if (workout.isCompleted) {
+                                          // Uncomplete workout by updating it
+                                          final updatedWorkout = Workout(
+                                            id: workout.id,
+                                            name: workout.name,
+                                            description: workout.description,
+                                            scheduledDate:
+                                                workout.scheduledDate,
+                                            completedDate: null,
+                                            isCompleted: false,
+                                            sets: workout.sets,
+                                            durationMinutes:
+                                                workout.durationMinutes,
+                                            notes: workout.notes,
+                                          );
+                                          context.read<WorkoutBloc>().add(
+                                                WorkoutUpdateRequested(
+                                                    updatedWorkout),
+                                              );
+                                        } else {
+                                          // Complete workout using BLoC
+                                          context.read<WorkoutBloc>().add(
+                                                WorkoutCompleteRequested(
+                                                    workout.id),
+                                              );
+                                        }
+                                      },
+                                      onRepeat: () {
+                                        // Duplicate the workout using BLoC
+                                        context.read<WorkoutBloc>().add(
+                                              WorkoutDuplicateRequested(
+                                                  workout.id),
+                                            );
+                                      },
+                                      onDelete: () {
+                                        // Delete workout using BLoC
+                                        context.read<WorkoutBloc>().add(
+                                              WorkoutDeleteRequested(
+                                                  workout.id),
+                                            );
+                                      },
                                     ),
                                   );
                                 },
@@ -978,6 +738,221 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Secondary actions offered from a workout card's overflow menu.
+enum _WorkoutCardAction { repeat, delete }
+
+/// A single workout entry in the Workouts list.
+///
+/// The primary "complete" toggle is a 48dp control laid out next to the
+/// title; secondary actions (repeat, delete) live in a trailing overflow
+/// menu so nothing overlaps the workout name. Delete asks for confirmation
+/// before [onDelete] is invoked.
+class WorkoutListCard extends StatelessWidget {
+  const WorkoutListCard({
+    super.key,
+    required this.workout,
+    required this.exerciseCount,
+    required this.displayDate,
+    required this.showDescription,
+    required this.onTap,
+    required this.onToggleComplete,
+    required this.onRepeat,
+    required this.onDelete,
+  });
+
+  final Workout workout;
+  final int exerciseCount;
+  final DateTime displayDate;
+  final bool showDescription;
+  final VoidCallback onTap;
+  final VoidCallback onToggleComplete;
+  final VoidCallback onRepeat;
+
+  /// Called only after the user confirms deletion.
+  final VoidCallback onDelete;
+
+  void _confirmDelete(BuildContext context) {
+    HapticFeedback.heavyImpact();
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Workout'),
+        content: Text(
+          'Are you sure you want to delete "${workout.name}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.teal[600], // Use teal instead of white
+              textStyle: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              onDelete();
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red, // Use red for delete button
+              textStyle: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            child: const Text('DELETE'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 16.0),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 4, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Title row: name + complete toggle + overflow menu
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      workout.name,
+                      style: theme.textTheme.titleLarge,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    iconSize: 32,
+                    constraints:
+                        const BoxConstraints(minWidth: 48, minHeight: 48),
+                    icon: Icon(
+                      workout.isCompleted
+                          ? Icons.check_circle
+                          : Icons.check_circle_outline,
+                      color: workout.isCompleted
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                    ),
+                    tooltip: workout.isCompleted
+                        ? 'Mark as incomplete'
+                        : 'Mark as complete',
+                    onPressed: () {
+                      HapticFeedback.mediumImpact();
+                      onToggleComplete();
+                    },
+                  ),
+                  PopupMenuButton<_WorkoutCardAction>(
+                    icon: const Icon(Icons.more_vert),
+                    tooltip: 'More actions',
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    onSelected: (action) {
+                      switch (action) {
+                        case _WorkoutCardAction.repeat:
+                          HapticFeedback.lightImpact();
+                          onRepeat();
+                        case _WorkoutCardAction.delete:
+                          _confirmDelete(context);
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: _WorkoutCardAction.repeat,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.repeat),
+                          title: Text('Repeat'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: _WorkoutCardAction.delete,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            Icons.delete_outline,
+                            color: colorScheme.error,
+                          ),
+                          title: Text(
+                            'Delete',
+                            style: TextStyle(color: colorScheme.error),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+
+              // Description if available
+              if (showDescription) ...[
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Text(
+                    workout.description!,
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 12),
+
+              // Stats row (wraps on narrow screens instead of overflowing)
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    // Exercise count
+                    Chip(
+                      avatar: const Icon(Icons.fitness_center, size: 16),
+                      label: Text(
+                        '$exerciseCount ${exerciseCount == 1 ? 'exercise' : 'exercises'}',
+                      ),
+                    ),
+
+                    // Set count
+                    Chip(
+                      avatar: const Icon(Icons.repeat, size: 16),
+                      label: Text(
+                        '${workout.sets.length} ${workout.sets.length == 1 ? 'set' : 'sets'}',
+                      ),
+                    ),
+
+                    // Date info - use the same date as sorting
+                    Chip(
+                      avatar: Icon(
+                        workout.isCompleted
+                            ? Icons.calendar_today
+                            : Icons.event,
+                        size: 16,
+                      ),
+                      label: Text(DateFormat('MMM d').format(displayDate)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

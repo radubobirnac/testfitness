@@ -86,6 +86,12 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   final Set<String> _expandedCoachHints = {};
   bool _isFinishing = false;
 
+  /// When this workout session started: the time the editor was opened, or
+  /// for an existing in-progress workout its earliest completed set if that
+  /// is earlier. Null when editing an already-completed workout (duration
+  /// then falls back to the first completed set). Not persisted.
+  DateTime? _startedAt;
+
   // Timer related variables (now managed by TimerBloc)
   // Local timer state removed - using TimerBloc instead
 
@@ -93,6 +99,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   void initState() {
     super.initState();
     _workoutBloc = context.read<WorkoutBloc>();
+    _startedAt = DateTime.now();
 
     // Keep the screen on while logging a workout so it doesn't lock between
     // sets.
@@ -130,6 +137,17 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         setsByExercise[set.exerciseId] = [];
       }
       setsByExercise[set.exerciseId]!.add(set);
+    }
+
+    if (workout.isCompleted) {
+      _startedAt = null;
+    } else if (_startedAt != null) {
+      for (final set in workout.sets) {
+        final at = set.completedAt;
+        if (set.isCompleted && at != null && at.isBefore(_startedAt!)) {
+          _startedAt = at;
+        }
+      }
     }
 
     _suspendDirtyTracking = true;
@@ -585,17 +603,22 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   }
 
   void _showExerciseSelectionSheet() {
-    showModalBottomSheet<Exercise>(
+    final alreadyAdded = _exercises.keys.toSet();
+    showModalBottomSheet<List<Exercise>>(
       context: context,
       isScrollControlled:
           true, // Allow the sheet to be larger than half the screen
       useRootNavigator: true, // Fix Hero tag conflicts on web
       backgroundColor: Colors.transparent,
       builder: (BuildContext context) {
-        return const ExerciseSelectionSheet();
+        return ExerciseSelectionSheet(
+          multiSelect: true,
+          excludedExerciseIds: alreadyAdded,
+        );
       },
-    ).then((exercise) {
-      if (exercise != null && mounted) {
+    ).then((exercises) {
+      if (exercises == null || !mounted) return;
+      for (final exercise in exercises) {
         _addExercise(exercise);
       }
     });
@@ -765,8 +788,12 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         firstDone = at;
       }
     }
-    final durationMinutes = firstDone != null && !now.isBefore(firstDone)
-        ? max(1, now.difference(firstDone).inMinutes)
+    var start = _startedAt ?? firstDone;
+    if (start != null && firstDone != null && firstDone.isBefore(start)) {
+      start = firstDone;
+    }
+    final durationMinutes = start != null && !now.isBefore(start)
+        ? max(1, now.difference(start).inMinutes)
         : null;
 
     final Workout finished;
@@ -813,6 +840,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
           allWorkouts: allWorkouts,
           exerciseNames: exerciseNames,
           useMetric: _coach.useMetric,
+          startedAt: start,
         ),
       ),
     ));

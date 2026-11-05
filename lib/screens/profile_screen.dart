@@ -21,6 +21,7 @@ import 'package:testfitness/screens/performance_screen.dart';
 import 'package:testfitness/screens/ai_chat_screen.dart';
 import 'package:testfitness/screens/gemini_tts_test_screen.dart';
 import 'package:testfitness/screens/tts_analytics_screen.dart';
+import 'package:testfitness/widgets/app_version_text.dart';
 
 enum _ApiKeyDialogResult { save, clear }
 
@@ -488,6 +489,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                     _buildAISettingsCard(context),
 
+                    const SizedBox(height: 24),
+                    const AppVersionText(),
                     const SizedBox(height: 32),
                   ],
                 ),
