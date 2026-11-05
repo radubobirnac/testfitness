@@ -60,8 +60,9 @@ class _WorkoutSummaryScreenState extends State<WorkoutSummaryScreen> {
   void initState() {
     super.initState();
     final workout = widget.workout;
-    _doneSets =
-        workout.sets.where((s) => s.isCompleted && s.reps > 0).toList();
+    // Completed working sets: warm-ups don't count towards totals, best
+    // sets or records.
+    _doneSets = workout.sets.where(ProgressionCoach.isCountable).toList();
 
     // Best set per exercise (highest estimated 1RM, then heaviest), in the
     // order exercises appear in the workout.
@@ -96,7 +97,8 @@ class _WorkoutSummaryScreenState extends State<WorkoutSummaryScreen> {
     final end = workout.completedDate ?? DateTime.now();
     DateTime? start = widget.startedAt;
     if (start == null) {
-      for (final set in _doneSets) {
+      // Warm-ups still mark when the session started.
+      for (final set in workout.sets.where((s) => s.isCompleted)) {
         final at = set.completedAt;
         if (at != null && (start == null || at.isBefore(start))) start = at;
       }

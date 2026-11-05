@@ -22,6 +22,8 @@ import 'package:testfitness/screens/ai_chat_screen.dart';
 import 'package:testfitness/screens/gemini_tts_test_screen.dart';
 import 'package:testfitness/screens/tts_analytics_screen.dart';
 import 'package:testfitness/widgets/app_version_text.dart';
+import 'package:testfitness/widgets/plate_calculator_sheet.dart';
+import 'package:testfitness/utils/plate_math.dart';
 
 enum _ApiKeyDialogResult { save, clear }
 
@@ -400,6 +402,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     // Weight Unit Setting
                     _buildWeightUnitCard(context, useMetricUnits),
 
+                    // Bar & plates (plate calculator)
+                    _buildBarAndPlatesCard(context, useMetricUnits),
+
                     // Sound Setting
                     _buildSoundSettingCard(context, playSoundOnTimerEnd),
 
@@ -623,6 +628,58 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildBarAndPlatesCard(BuildContext context, bool useMetricUnits) {
+    final prefs = UserPreferencesService();
+    final unit = useMetricUnits ? 'kg' : 'lb';
+    final bar = prefs.getBarWeight(metric: useMetricUnits);
+    final plates = prefs.getAvailablePlates(metric: useMetricUnits);
+    final platesLabel = plates.isEmpty
+        ? 'no plates'
+        : plates.map(formatPlateWeight).join(', ');
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: ListTile(
+        minVerticalPadding: 12,
+        leading: const Icon(Icons.fitness_center),
+        title: const Text('Bar & plates'),
+        subtitle: Text(
+            'Bar ${formatPlateWeight(bar)} $unit · Plates: $platesLabel'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () async {
+          await showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            showDragHandle: true,
+            useSafeArea: true,
+            builder: (sheetContext) => SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Bar & plates',
+                      style: Theme.of(sheetContext).textTheme.titleLarge),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Used by the plate calculator. Pairs of each plate are '
+                    'assumed unlimited.',
+                    style: TextStyle(
+                        color: Theme.of(sheetContext)
+                            .colorScheme
+                            .onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 12),
+                  BarAndPlatesEditor(metric: useMetricUnits),
+                ],
+              ),
+            ),
+          );
+          if (mounted) setState(() {});
+        },
       ),
     );
   }

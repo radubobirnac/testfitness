@@ -19,10 +19,12 @@ import 'package:testfitness/models/workout_set.dart';
 import 'package:testfitness/screens/exercise_selection_sheet.dart';
 import 'package:testfitness/screens/workout_summary_screen.dart';
 import 'package:testfitness/services/progression_coach.dart';
+import 'package:testfitness/services/rest_preferences_service.dart';
 import 'package:testfitness/services/user_preferences_service.dart';
 import 'package:testfitness/utils/audio_player_util.dart';
 import 'package:testfitness/utils/app_logger.dart';
 import 'package:testfitness/widgets/animated_feedback.dart';
+import 'package:testfitness/widgets/plate_calculator_sheet.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 class ExerciseDetailScreen extends StatefulWidget {
@@ -100,6 +102,14 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     super.initState();
     _workoutBloc = context.read<WorkoutBloc>();
     _startedAt = DateTime.now();
+
+    // Per-exercise rest times (header chips + rest timer duration).
+    final restPrefs = RestPreferencesService();
+    if (!restPrefs.isInitialized) {
+      restPrefs.initialize().then((_) {
+        if (mounted) setState(() {});
+      });
+    }
 
     // Keep the screen on while logging a workout so it doesn't lock between
     // sets.
@@ -208,11 +218,19 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     }
   }
 
-  // Start or reset the rest timer using TimerBloc
-  void _startRestTimer() {
-    // Get user's preferred duration from preferences
-    final userPrefs = UserPreferencesService();
-    final timerDuration = userPrefs.getRestTimerDuration();
+  /// Rest seconds for [exerciseId]: its per-exercise rest (override or type
+  /// default), or the global rest-timer preference for an unknown exercise.
+  int _restSecondsFor(String exerciseId) {
+    final exercise = _exercises[exerciseId];
+    if (exercise == null) {
+      return UserPreferencesService().getRestTimerDuration();
+    }
+    return RestPreferencesService().restSecondsFor(exercise);
+  }
+
+  // Start or reset the rest timer using TimerBloc, with [exerciseId]'s rest.
+  void _startRestTimer(String exerciseId) {
+    final timerDuration = _restSecondsFor(exerciseId);
 
     // Initialize and start timer using TimerBloc
     context.read<TimerBloc>().add(TimerInitialized(
@@ -320,8 +338,9 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
   /// past workouts, else the most recent completed set, else 0 x 8.
   ({double weight, int reps}) _defaultsForNewSet(String exerciseId) {
     final existing = _exerciseSets[exerciseId];
-    if (existing != null && existing.isNotEmpty) {
-      final last = existing.last;
+    final working = existing?.where((s) => !s.isWarmup);
+    if (working != null && working.isNotEmpty) {
+      final last = working.last;
       return (weight: last.weight, reps: last.reps);
     }
     final target = _coachHintFor(exerciseId).target;
@@ -344,7 +363,11 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       if (workout.id == _currentWorkoutId) continue;
       final workoutTime = workout.completedDate ?? workout.scheduledDate;
       for (final set in workout.sets) {
-        if (set.exerciseId != exerciseId || !set.isCompleted) continue;
+        if (set.exerciseId != exerciseId ||
+            !set.isCompleted ||
+            set.isWarmup) {
+          continue;
+        }
         final time = set.completedAt ?? workoutTime;
         if (best == null ||
             (time != null && (bestTime == null || !time.isBefore(bestTime)))) {
@@ -429,7 +452,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
-        content: Text('Set ${index + 1} deleted'),
+        content: Text('${_setLabel(sets, index, removed)} deleted'),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
           label: 'Undo',
@@ -501,6 +524,164 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
         .replaceFirst(RegExp(r'\.$'), '');
   }
 
+  /// "Set 2" (working sets numbered 1, 2, 3… skipping warm-ups) or
+  /// "Warm-up set".
+  static String _setLabel(List<WorkoutSet> sets, int index, WorkoutSet set) {
+    if (set.isWarmup) return 'Warm-up set';
+    return 'Set ${_workingSetNumber(sets, index)}';
+  }
+
+  /// 1-based number of the working set at [index], not counting warm-ups.
+  static int _workingSetNumber(List<WorkoutSet> sets, int index) =>
+      sets.take(index).where((s) => !s.isWarmup).length + 1;
+
+  /// The weight currently typed for [set] (falls back to its model value).
+  double _liveWeight(WorkoutSet set) =>
+      double.tryParse(
+          _weightControllers[set.id]?.text.replaceAll(',', '.') ?? '') ??
+      set.weight;
+
+  /// Insert warm-up sets before the working sets of [exerciseId], ramping up
+  /// to the first working set's weight (or the coach target).
+  void _addWarmups(String exerciseId) {
+    final sets = _exerciseSets[exerciseId];
+    if (sets == null) return;
+    if (sets.any((s) => s.isWarmup)) {
+      AnimatedFeedback.showSnackBar(context, 'Warm-ups already added');
+      return;
+    }
+    final firstWorking = sets.where((s) => !s.isWarmup).firstOrNull;
+    var working = firstWorking != null ? _liveWeight(firstWorking) : 0.0;
+    if (working <= 0) working = _coachHintFor(exerciseId).target?.weight ?? 0;
+
+    double? bar;
+    try {
+      bar = UserPreferencesService().getBarWeight(metric: _coach.useMetric);
+    } catch (e) {
+      AppLogger.debug('Bar weight unavailable, using default: $e');
+    }
+    final specs = _coach.warmupSets(working, barWeight: bar);
+    if (specs.isEmpty) {
+      AnimatedFeedback.showSnackBar(
+        context,
+        working <= 0
+            ? 'Enter a working weight first'
+            : 'Working weight is too light for warm-ups',
+      );
+      return;
+    }
+
+    final warmups = [
+      for (final spec in specs)
+        WorkoutSet.create(
+          exerciseId: exerciseId,
+          reps: spec.reps,
+          weight: spec.weight,
+          isWarmup: true,
+        ),
+    ];
+    setState(() {
+      sets.insertAll(0, warmups);
+      for (final set in warmups) {
+        _weightControllers[set.id] =
+            TextEditingController(text: _formatWeight(set.weight));
+        _repsControllers[set.id] =
+            TextEditingController(text: set.reps.toString());
+      }
+    });
+    _markDirty();
+    _scheduleAutosave();
+  }
+
+  /// Open the plate calculator for the current (first not-done) set of
+  /// [exerciseId], or its last set when all are done.
+  void _openPlateCalculator(String exerciseId) {
+    final sets = _exerciseSets[exerciseId] ?? const <WorkoutSet>[];
+    final current =
+        sets.where((s) => !s.isCompleted).firstOrNull ?? sets.lastOrNull;
+    final weight = current != null ? _liveWeight(current) : 0.0;
+    showPlateCalculatorSheet(context, weight: weight);
+  }
+
+  /// Let the user pick the exercise's rest (0:30 to 5:00) or go back to its
+  /// default.
+  Future<void> _showRestPicker(Exercise exercise) async {
+    final service = RestPreferencesService();
+    final current = service.overrideFor(exercise.id);
+    final defaultSeconds =
+        RestPreferencesService.defaultRestSecondsFor(exercise);
+    // -1 = "Default"; null = dismissed.
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      useRootNavigator: true,
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        Widget check(bool selected) => selected
+            ? Icon(Icons.check, color: colorScheme.primary)
+            : const SizedBox(width: 24);
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.7),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                ListTile(
+                  title: Text('Rest for ${exercise.name}',
+                      style: Theme.of(context).textTheme.titleMedium),
+                ),
+                ListTile(
+                  title: Text('Default '
+                      '(${RestPreferencesService.format(defaultSeconds)})'),
+                  trailing: check(current == null),
+                  onTap: () => Navigator.pop(context, -1),
+                ),
+                for (final seconds in RestPreferencesService.choices)
+                  ListTile(
+                    title: Text(RestPreferencesService.format(seconds)),
+                    trailing: check(current == seconds),
+                    onTap: () => Navigator.pop(context, seconds),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+    await service.setRestSeconds(exercise.id, picked < 0 ? null : picked);
+    if (mounted) setState(() {});
+  }
+
+  /// "Rest 2:30" and "Add warm-ups" chips under the exercise header.
+  Widget _buildExerciseTools(BuildContext context, Exercise exercise) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final sets = _exerciseSets[exercise.id] ?? const <WorkoutSet>[];
+    final hasWarmups = sets.any((s) => s.isWarmup);
+    final rest = RestPreferencesService().restSecondsFor(exercise);
+    return Wrap(
+      spacing: 8,
+      children: [
+        ActionChip(
+          avatar: Icon(Icons.timer_outlined,
+              size: 18, color: colorScheme.onSurfaceVariant),
+          label: Text('Rest ${RestPreferencesService.format(rest)}'),
+          tooltip: 'Change rest time for this exercise',
+          onPressed: () => _showRestPicker(exercise),
+        ),
+        if (!hasWarmups && sets.any((s) => !s.isWarmup))
+          ActionChip(
+            avatar: Icon(Icons.whatshot_outlined,
+                size: 18, color: colorScheme.onSurfaceVariant),
+            label: const Text('Add warm-ups'),
+            tooltip: 'Add warm-up sets before the working sets',
+            onPressed: () => _addWarmups(exercise.id),
+          ),
+      ],
+    );
+  }
+
   void _toggleSetCompletionForExercise(String exerciseId, int index) {
     if (_exerciseSets.containsKey(exerciseId) &&
         index >= 0 &&
@@ -518,14 +699,16 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
           completedAt: !wasCompleted ? DateTime.now() : null,
           restTimeSeconds: set.restTimeSeconds,
           notes: set.notes,
+          isWarmup: set.isWarmup,
         );
       });
       _markDirty();
       _scheduleAutosave();
 
-      // Start or reset the timer when a set is marked as complete
-      if (!wasCompleted) {
-        _startRestTimer();
+      // Start or reset the timer when a working set is marked as complete
+      // (warm-ups lead straight into the next set, so no rest timer).
+      if (!wasCompleted && !set.isWarmup) {
+        _startRestTimer(exerciseId);
       }
     }
   }
@@ -548,6 +731,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
           completedAt: set.completedAt,
           restTimeSeconds: set.restTimeSeconds,
           notes: set.notes,
+          isWarmup: set.isWarmup,
         );
 
         // No need to update the controller text here since the change came from the controller
@@ -576,6 +760,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
           completedAt: set.completedAt,
           restTimeSeconds: set.restTimeSeconds,
           notes: set.notes,
+          isWarmup: set.isWarmup,
         );
 
         // No need to update the controller text here since the change came from the controller
@@ -1069,6 +1254,14 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                                               ),
                                             ),
                                             IconButton(
+                                              icon: const Icon(
+                                                  Icons.calculate_outlined),
+                                              tooltip: 'Plate calculator',
+                                              onPressed: () =>
+                                                  _openPlateCalculator(
+                                                      exerciseId),
+                                            ),
+                                            IconButton(
                                                 icon: const Icon(
                                                     Icons.swap_horiz),
                                                 tooltip: 'Replace Exercise',
@@ -1090,6 +1283,9 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
                                         ),
 
                                         _buildCoachHint(context, exerciseId),
+
+                                        const SizedBox(height: 4),
+                                        _buildExerciseTools(context, exercise),
 
                                         if (_showExerciseDescription(
                                             exercise.description)) ...[
@@ -1401,6 +1597,9 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
       BuildContext context, String exerciseId, int index, WorkoutSet set) {
     final colorScheme = Theme.of(context).colorScheme;
     final showSteppers = !set.isCompleted;
+    final sets = _exerciseSets[exerciseId] ?? const <WorkoutSet>[];
+    final warmup = set.isWarmup;
+    final label = _setLabel(sets, index, set);
 
     final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -1412,17 +1611,22 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
             width: _setNumberWidth,
             height: 48,
             child: Material(
-              color: colorScheme.surfaceContainerHighest,
+              color: warmup
+                  ? colorScheme.surfaceContainerLow
+                  : colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(8),
               child: InkWell(
                 borderRadius: BorderRadius.circular(8),
                 onLongPress: () => _deleteSet(exerciseId, index),
                 child: Center(
                   child: Text(
-                    '${index + 1}',
+                    warmup ? 'W' : '${_workingSetNumber(sets, index)}',
+                    semanticsLabel: label,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.bold,
-                          color: colorScheme.onSurface,
+                          color: warmup
+                              ? colorScheme.onSurfaceVariant
+                              : colorScheme.onSurface,
                         ),
                   ),
                 ),
@@ -1438,7 +1642,8 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
               controller: _weightControllers[set.id] ??
                   TextEditingController(text: _formatWeight(set.weight)),
               decimal: true,
-              semanticLabel: 'Set ${index + 1} weight',
+              semanticLabel: '$label weight',
+              muted: warmup,
               onChanged: (value) {
                 final weight = double.tryParse(value) ?? 0;
                 _updateSetWeightForExercise(exerciseId, index, weight);
@@ -1460,7 +1665,8 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
               controller: _repsControllers[set.id] ??
                   TextEditingController(text: set.reps.toString()),
               decimal: false,
-              semanticLabel: 'Set ${index + 1} reps',
+              semanticLabel: '$label reps',
+              muted: warmup,
               onChanged: (value) {
                 final reps = int.tryParse(value) ?? 0;
                 _updateSetRepsForExercise(exerciseId, index, reps);
@@ -1525,7 +1731,9 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
     required ValueChanged<String> onChanged,
     VoidCallback? onDecrement,
     VoidCallback? onIncrement,
+    bool muted = false,
   }) {
+    final textStyle = Theme.of(context).textTheme.titleMedium;
     final field = Semantics(
       label: semanticLabel,
       child: TextField(
@@ -1543,7 +1751,10 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen>
               const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
           isDense: true,
         ),
-        style: Theme.of(context).textTheme.titleMedium,
+        style: muted
+            ? textStyle?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant)
+            : textStyle,
         onChanged: onChanged,
       ),
     );

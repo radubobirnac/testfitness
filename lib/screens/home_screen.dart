@@ -11,6 +11,7 @@ import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/screens/boxing_cardio_screen.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
 import 'package:testfitness/screens/heart_rate_monitor_screen.dart';
+import 'package:testfitness/screens/routines_screen.dart';
 import 'package:testfitness/screens/weight_test_selection_screen.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/services/ai_workout_generator.dart';
@@ -87,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 24),
                         _buildRecentWorkoutsSection(state.workouts),
                         const SizedBox(height: 24),
+                        RoutineQuickStart(workouts: state.workouts),
                         _buildQuickActionsSection(),
                       ],
                     ),

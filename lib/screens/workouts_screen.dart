@@ -11,6 +11,7 @@ import 'package:testfitness/models/workout.dart';
 import 'package:testfitness/models/workout_set.dart';
 import 'package:testfitness/repositories/exercise_repository.dart';
 import 'package:testfitness/screens/exercise_detail_screen.dart';
+import 'package:testfitness/screens/routines_screen.dart';
 import 'package:testfitness/services/ai_service.dart';
 import 'package:testfitness/services/ai_workout_generator.dart';
 import 'package:testfitness/services/progression_coach.dart';
@@ -450,6 +451,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                 ? _buildLoadingState()
                 : Column(
                     children: [
+                      RoutinesSection(workouts: state.workouts),
                       // Sort chips
                     Padding(
                       padding: const EdgeInsets.all(8.0),
@@ -662,6 +664,9 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                                                   workout.id),
                                             );
                                       },
+                                      onSaveAsRoutine: () =>
+                                          saveWorkoutAsRoutine(
+                                              context, workout),
                                       onDelete: () {
                                         // Delete workout using BLoC
                                         context.read<WorkoutBloc>().add(
@@ -743,7 +748,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
 }
 
 /// Secondary actions offered from a workout card's overflow menu.
-enum _WorkoutCardAction { repeat, delete }
+enum _WorkoutCardAction { repeat, saveAsRoutine, delete }
 
 /// A single workout entry in the Workouts list.
 ///
@@ -762,6 +767,7 @@ class WorkoutListCard extends StatelessWidget {
     required this.onToggleComplete,
     required this.onRepeat,
     required this.onDelete,
+    this.onSaveAsRoutine,
   });
 
   final Workout workout;
@@ -774,6 +780,13 @@ class WorkoutListCard extends StatelessWidget {
 
   /// Called only after the user confirms deletion.
   final VoidCallback onDelete;
+
+  /// "Save as routine"; the menu item is disabled when null or when the
+  /// workout has no (working) sets.
+  final VoidCallback? onSaveAsRoutine;
+
+  bool get _canSaveAsRoutine =>
+      onSaveAsRoutine != null && workout.sets.any((s) => !s.isWarmup);
 
   void _confirmDelete(BuildContext context) {
     HapticFeedback.heavyImpact();
@@ -867,6 +880,8 @@ class WorkoutListCard extends StatelessWidget {
                         case _WorkoutCardAction.repeat:
                           HapticFeedback.lightImpact();
                           onRepeat();
+                        case _WorkoutCardAction.saveAsRoutine:
+                          onSaveAsRoutine?.call();
                         case _WorkoutCardAction.delete:
                           _confirmDelete(context);
                       }
@@ -878,6 +893,15 @@ class WorkoutListCard extends StatelessWidget {
                           contentPadding: EdgeInsets.zero,
                           leading: Icon(Icons.repeat),
                           title: Text('Repeat'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: _WorkoutCardAction.saveAsRoutine,
+                        enabled: _canSaveAsRoutine,
+                        child: const ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.bookmark_add_outlined),
+                          title: Text('Save as routine'),
                         ),
                       ),
                       PopupMenuItem(

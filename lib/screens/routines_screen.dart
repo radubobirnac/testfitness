@@ -1,0 +1,484 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
+import 'package:testfitness/blocs/workout/workout_bloc.dart';
+import 'package:testfitness/blocs/workout/workout_event.dart';
+import 'package:testfitness/models/routine.dart';
+import 'package:testfitness/models/workout.dart';
+import 'package:testfitness/repositories/routine_repository.dart';
+import 'package:testfitness/screens/exercise_detail_screen.dart';
+import 'package:testfitness/services/user_preferences_service.dart';
+import 'package:testfitness/utils/app_logger.dart';
+
+/// Shared routine UI: the Workouts-tab section, the Home quick-start row and
+/// the save / start / rename / delete flows.
+
+/// "3 exercises · last used yesterday"
+String describeRoutine(Routine routine, {DateTime? now}) {
+  final count = routine.exercises.length;
+  final exercises = '$count ${count == 1 ? 'exercise' : 'exercises'}';
+  return '$exercises · ${describeLastUsed(routine.lastUsedAt, now: now)}';
+}
+
+String describeLastUsed(DateTime? lastUsed, {DateTime? now}) {
+  if (lastUsed == null) return 'not used yet';
+  final ref = now ?? DateTime.now();
+  final today = DateTime(ref.year, ref.month, ref.day);
+  final day = DateTime(lastUsed.year, lastUsed.month, lastUsed.day);
+  final days = today.difference(day).inDays;
+  if (days <= 0) return 'last used today';
+  if (days == 1) return 'last used yesterday';
+  if (days < 7) return 'last used $days days ago';
+  return 'last used ${DateFormat('MMM d').format(lastUsed)}';
+}
+
+/// Asks for a name (prefilled with the workout name), saves the routine and
+/// confirms with a SnackBar.
+Future<void> saveWorkoutAsRoutine(
+  BuildContext context,
+  Workout workout, {
+  RoutineRepository? repository,
+}) async {
+  final name = await showRoutineNameDialog(
+    context,
+    title: 'Save as routine',
+    initialName: workout.name,
+    confirmLabel: 'Save',
+  );
+  if (name == null || !context.mounted) return;
+  final routine = Routine.fromWorkout(workout, name: name);
+  if (routine.exercises.isEmpty) return;
+  await (repository ?? RoutineRepository()).saveRoutine(routine);
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text('Saved "$name" as a routine')),
+  );
+}
+
+/// Builds today's workout from [routine], creates it via [WorkoutBloc] and
+/// opens the editor (same flow as "Next workout").
+Future<void> startRoutine(
+  BuildContext context,
+  Routine routine,
+  List<Workout> allWorkouts, {
+  RoutineRepository? repository,
+}) async {
+  HapticFeedback.selectionClick();
+  final workout = routine.toWorkout(
+    allWorkouts,
+    useMetric: UserPreferencesService().getUseMetricUnits(),
+  );
+  final bloc = context.read<WorkoutBloc>();
+  bloc.add(WorkoutCreateRequested(workout));
+  try {
+    await (repository ?? RoutineRepository()).markUsed(routine.id);
+  } catch (e) {
+    AppLogger.warning('Could not mark routine as used', e);
+  }
+  if (!context.mounted) return;
+  await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) =>
+          ExerciseDetailScreen.editWorkout(workoutId: workout.id),
+    ),
+  );
+  if (!bloc.isClosed) bloc.add(const WorkoutLoadRequested());
+}
+
+Future<String?> showRoutineNameDialog(
+  BuildContext context, {
+  required String title,
+  required String initialName,
+  required String confirmLabel,
+}) {
+  return showDialog<String>(
+    context: context,
+    builder: (context) => _RoutineNameDialog(
+      title: title,
+      initialName: initialName,
+      confirmLabel: confirmLabel,
+    ),
+  );
+}
+
+class _RoutineNameDialog extends StatefulWidget {
+  const _RoutineNameDialog({
+    required this.title,
+    required this.initialName,
+    required this.confirmLabel,
+  });
+
+  final String title;
+  final String initialName;
+  final String confirmLabel;
+
+  @override
+  State<_RoutineNameDialog> createState() => _RoutineNameDialogState();
+}
+
+class _RoutineNameDialogState extends State<_RoutineNameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialName);
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _controller.text.length,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _controller.text.trim();
+    if (name.isEmpty) return;
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 40,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(labelText: 'Routine name'),
+        onChanged: (_) => setState(() {}),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _controller.text.trim().isEmpty ? null : _submit,
+          child: Text(widget.confirmLabel),
+        ),
+      ],
+    );
+  }
+}
+
+/// Loads routines and reloads whenever [RoutineRepository.changes] fires.
+mixin _RoutineLoader<T extends StatefulWidget> on State<T> {
+  RoutineRepository get repository;
+  List<Routine>? routines;
+
+  @override
+  void initState() {
+    super.initState();
+    RoutineRepository.changes.addListener(_reload);
+    _reload();
+  }
+
+  @override
+  void dispose() {
+    RoutineRepository.changes.removeListener(_reload);
+    super.dispose();
+  }
+
+  Future<void> _reload() async {
+    final loaded = await repository.getRoutines();
+    if (mounted) setState(() => routines = loaded);
+  }
+}
+
+enum _RoutineAction { rename, delete }
+
+/// "Routines" section at the top of the Workouts tab: horizontal cards,
+/// tap = start, long-press / ⋮ = rename or delete.
+class RoutinesSection extends StatefulWidget {
+  const RoutinesSection({
+    super.key,
+    required this.workouts,
+    this.repository,
+  });
+
+  final List<Workout> workouts;
+  final RoutineRepository? repository;
+
+  @override
+  State<RoutinesSection> createState() => _RoutinesSectionState();
+}
+
+class _RoutinesSectionState extends State<RoutinesSection>
+    with _RoutineLoader<RoutinesSection> {
+  @override
+  late final RoutineRepository repository =
+      widget.repository ?? RoutineRepository();
+
+  Future<void> _onAction(_RoutineAction action, Routine routine) async {
+    switch (action) {
+      case _RoutineAction.rename:
+        final name = await showRoutineNameDialog(
+          context,
+          title: 'Rename routine',
+          initialName: routine.name,
+          confirmLabel: 'Rename',
+        );
+        if (name == null || name == routine.name) return;
+        await repository.saveRoutine(routine.copyWith(name: name));
+      case _RoutineAction.delete:
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            final colorScheme = Theme.of(context).colorScheme;
+            return AlertDialog(
+              title: const Text('Delete routine'),
+              content: Text('Delete "${routine.name}"? Past workouts are kept.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colorScheme.error,
+                    foregroundColor: colorScheme.onError,
+                  ),
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            );
+          },
+        );
+        if (confirmed == true) await repository.deleteRoutine(routine.id);
+    }
+  }
+
+  Future<void> _showActionSheet(Routine routine) async {
+    HapticFeedback.mediumImpact();
+    final action = await showModalBottomSheet<_RoutineAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Rename'),
+                onTap: () => Navigator.pop(context, _RoutineAction.rename),
+              ),
+              ListTile(
+                leading: Icon(Icons.delete_outline, color: colorScheme.error),
+                title: Text('Delete',
+                    style: TextStyle(color: colorScheme.error)),
+                onTap: () => Navigator.pop(context, _RoutineAction.delete),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (action != null && mounted) await _onAction(action, routine);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final loaded = routines;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Routines', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (loaded == null)
+            const SizedBox(height: 48)
+          else if (loaded.isEmpty)
+            Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(minHeight: 48),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.bookmark_border,
+                      color: colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Save a workout as a routine from its ⋮ menu',
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            SizedBox(
+              height: 104,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: loaded.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) =>
+                    _buildCard(context, loaded[index]),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCard(BuildContext context, Routine routine) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return SizedBox(
+      width: 196,
+      child: Card(
+        margin: EdgeInsets.zero,
+        color: colorScheme.secondaryContainer,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => startRoutine(context, routine, widget.workouts,
+              repository: repository),
+          onLongPress: () => _showActionSheet(routine),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 0, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        routine.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: colorScheme.onSecondaryContainer,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    PopupMenuButton<_RoutineAction>(
+                      tooltip: 'Routine actions',
+                      icon: Icon(Icons.more_vert,
+                          color: colorScheme.onSecondaryContainer),
+                      style: IconButton.styleFrom(
+                          minimumSize: const Size(48, 48)),
+                      onSelected: (action) => _onAction(action, routine),
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                          value: _RoutineAction.rename,
+                          child: Text('Rename'),
+                        ),
+                        PopupMenuItem(
+                          value: _RoutineAction.delete,
+                          child: Text('Delete'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: Text(
+                      describeRoutine(routine),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Home-screen quick start: up to three "Start [routine name]" buttons.
+/// Renders nothing when there are no routines.
+class RoutineQuickStart extends StatefulWidget {
+  const RoutineQuickStart({
+    super.key,
+    required this.workouts,
+    this.repository,
+    this.maxRoutines = 3,
+  });
+
+  final List<Workout> workouts;
+  final RoutineRepository? repository;
+  final int maxRoutines;
+
+  @override
+  State<RoutineQuickStart> createState() => _RoutineQuickStartState();
+}
+
+class _RoutineQuickStartState extends State<RoutineQuickStart>
+    with _RoutineLoader<RoutineQuickStart> {
+  @override
+  late final RoutineRepository repository =
+      widget.repository ?? RoutineRepository();
+
+  @override
+  Widget build(BuildContext context) {
+    final loaded = routines;
+    if (loaded == null || loaded.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Your Routines',
+            style: theme.textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final routine in loaded.take(widget.maxRoutines))
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                  ),
+                  onPressed: () => startRoutine(
+                      context, routine, widget.workouts,
+                      repository: repository),
+                  icon: const Icon(Icons.play_arrow),
+                  label: Text(
+                    'Start ${routine.name}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
