@@ -115,8 +115,8 @@ void main() {
           .workout;
       final n = names(w);
       expect(n.length, 5);
-      expect(
-          n.take(3), ['Bench Press', 'Dumbbell Press', 'Incline Bench Press']);
+      expect(n.take(3),
+          ['Bench Press', 'Dumbbell Bench Press', 'Incline Bench Press']);
       for (final name in n.skip(3)) {
         expect(profile(name).primarily(Muscle.triceps), isTrue, reason: name);
       }

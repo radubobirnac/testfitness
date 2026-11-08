@@ -130,7 +130,7 @@ class SplitWorkoutBuilder {
   /// library, so a user without history gets sensible staples.
   static const List<String> _staples = [
     'bench press',
-    'dumbbell press',
+    'dumbbell bench press',
     'incline bench press',
     'push-up',
     'cable fly',
@@ -142,7 +142,7 @@ class SplitWorkoutBuilder {
     'squat',
     'leg press',
     'romanian deadlift',
-    'leg curl',
+    'lying leg curl',
     'barbell hip thrust',
     'deadlift',
     'leg extension',
@@ -165,10 +165,8 @@ class SplitWorkoutBuilder {
   /// Generic stations / niche machines never auto-picked from the library
   /// (still used when the user has history with them).
   static const Set<String> _libraryExcluded = {
-    'cable crossover station',
     'functional trainer',
     'neck flexion machine',
-    'assisted pull-up/dip machine',
   };
 
   /// Completed working sets (no warm-ups) with a date not after [reference].

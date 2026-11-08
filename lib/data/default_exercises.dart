@@ -1,5 +1,8 @@
 import 'package:testfitness/models/exercise.dart';
 
+/// Built-in exercise library, grouped by muscle. Seeded by name
+/// ([ExerciseSeedService]); renames and merges of built-ins go through
+/// [ExerciseCatalogMigration] so users keep their history.
 List<Exercise> buildDefaultExercises() {
   return [
     // Chest – presses
@@ -41,8 +44,16 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Dumbbell Press',
+      name: 'Dumbbell Bench Press',
       description: 'Press dumbbells upward while lying on a flat bench.',
+      muscleGroup: 'Chest',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Incline Dumbbell Press',
+      description:
+          'Press dumbbells upward while lying on an incline bench to emphasize the upper chest.',
       muscleGroup: 'Chest',
       category: 'Dumbbell',
       isCustom: false,
@@ -87,7 +98,7 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
 
-    // Chest – flyes and dips
+    // Chest – flyes
     Exercise.create(
       name: 'Dumbbell Fly',
       description:
@@ -98,7 +109,8 @@ List<Exercise> buildDefaultExercises() {
     ),
     Exercise.create(
       name: 'Cable Fly',
-      description: 'Bring cable handles together in front of your chest.',
+      description:
+          'Bring cable handles together in front of your chest, at a crossover station or any dual pulley.',
       muscleGroup: 'Chest',
       category: 'Cable',
       isCustom: false,
@@ -109,29 +121,6 @@ List<Exercise> buildDefaultExercises() {
           'Seated machine where arms move horizontally to adduct the shoulders, isolating the chest muscles.',
       muscleGroup: 'Chest',
       category: 'Machine',
-      isCustom: false,
-    ),
-    Exercise.create(
-      name: 'Cable Crossover Station',
-      description:
-          'Dual adjustable pulley system allowing for various chest, shoulder and back exercises.',
-      muscleGroup: 'Multiple',
-      category: 'Cable',
-      isCustom: false,
-    ),
-    Exercise.create(
-      name: 'Dip',
-      description: 'Lower and raise your body between parallel bars.',
-      muscleGroup: 'Chest',
-      category: 'Bodyweight',
-      isCustom: false,
-    ),
-    Exercise.create(
-      name: 'Assisted Dip',
-      description:
-          'Lower and raise your body with assistance to work chest and triceps.',
-      muscleGroup: 'Chest, Arms',
-      category: 'Assisted bodyweight',
       isCustom: false,
     ),
 
@@ -154,7 +143,8 @@ List<Exercise> buildDefaultExercises() {
     ),
     Exercise.create(
       name: 'T-Bar Row',
-      description: 'Chest-supported row using a barbell with one end fixed.',
+      description:
+          'Straddle a landmine-loaded barbell and row the loaded end to your chest with a close-grip handle.',
       muscleGroup: 'Back',
       category: 'Barbell',
       isCustom: false,
@@ -163,14 +153,6 @@ List<Exercise> buildDefaultExercises() {
       name: 'T-Bar Row Machine',
       description:
           'Chest-supported rowing machine allowing for targeted back development with reduced lower back stress.',
-      muscleGroup: 'Back',
-      category: 'Machine',
-      isCustom: false,
-    ),
-    Exercise.create(
-      name: 'Chest-Supported T-Bar Row Machine',
-      description:
-          'Chest-supported T-bar row for controlled back training.',
       muscleGroup: 'Back',
       category: 'Machine',
       isCustom: false,
@@ -198,14 +180,6 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Low Row Machine',
-      description:
-          'Seated horizontal pulling machine targeting the mid-back with adjustable height settings.',
-      muscleGroup: 'Back',
-      category: 'Machine',
-      isCustom: false,
-    ),
-    Exercise.create(
       name: 'Chest-Supported Row Machine',
       description:
           'Rowing machine with chest support to isolate the back and reduce lower back strain.',
@@ -224,17 +198,17 @@ List<Exercise> buildDefaultExercises() {
     Exercise.create(
       name: 'High Row Machine',
       description:
-          'Machine row with a higher pulling angle to emphasize upper back and lats.',
+          'Machine row with a high pulling angle for the upper back and lats, including iso-lateral versions.',
       muscleGroup: 'Back',
       category: 'Machine',
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Iso-Lateral High Row Machine',
+      name: 'Inverted Row',
       description:
-          'Independent arm high row machine for balanced upper back and lat development.',
+          'Hang under a fixed bar with your heels on the floor and pull your chest to the bar.',
       muscleGroup: 'Back',
-      category: 'Machine',
+      category: 'Bodyweight',
       isCustom: false,
     ),
 
@@ -248,6 +222,14 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
+      name: 'Straight-Arm Pulldown',
+      description:
+          'With arms nearly straight, sweep the cable bar down to your thighs to isolate the lats.',
+      muscleGroup: 'Back',
+      category: 'Cable',
+      isCustom: false,
+    ),
+    Exercise.create(
       name: 'Pull-up',
       description:
           'A compound upper-body exercise that works the back, shoulders, and arms.',
@@ -256,27 +238,26 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Assisted Pull Up',
+      name: 'Chin-up',
       description:
-          'Pull your body up with assistance to work the back muscles.',
+          'Pull your chin over the bar with palms facing you, working the lats and biceps.',
+      muscleGroup: 'Back, Arms',
+      category: 'Bodyweight',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Assisted Pull-up',
+      description:
+          'Pull-up on an assisted machine or with a band; the counterweight takes part of your bodyweight.',
       muscleGroup: 'Back',
       category: 'Assisted bodyweight',
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Assisted Chin Up',
-      description:
-          'Pull your body up with assistance to work back and biceps.',
+      name: 'Assisted Chin-up',
+      description: 'Pull your body up with assistance to work back and biceps.',
       muscleGroup: 'Back, Arms',
       category: 'Assisted bodyweight',
-      isCustom: false,
-    ),
-    Exercise.create(
-      name: 'Assisted Pull-Up/Dip Machine',
-      description:
-          'Counterbalanced machine to assist pull-ups and dips with adjustable support.',
-      muscleGroup: 'Back, Chest, Arms',
-      category: 'Machine',
       isCustom: false,
     ),
     Exercise.create(
@@ -288,11 +269,35 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
 
-    // Back – hinges and lower back
+    // Hinges and lower back
     Exercise.create(
       name: 'Deadlift',
       description:
           'A compound exercise that works many muscle groups including the back, glutes, and hamstrings.',
+      muscleGroup: 'Back',
+      category: 'Barbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Sumo Deadlift',
+      description:
+          'Deadlift with a wide stance and hands inside the knees, shifting work to the glutes, quads and inner thighs.',
+      muscleGroup: 'Legs, Back',
+      category: 'Barbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Trap Bar Deadlift',
+      description:
+          'Deadlift standing inside a hex (trap) bar and lifting with the neutral-grip handles.',
+      muscleGroup: 'Legs, Back',
+      category: 'Barbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Rack Pull',
+      description:
+          'Partial deadlift from pins set around knee height, overloading the upper back and lockout.',
       muscleGroup: 'Back',
       category: 'Barbell',
       isCustom: false,
@@ -314,7 +319,7 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
 
-    // Shoulders
+    // Shoulders – presses
     Exercise.create(
       name: 'Overhead Press',
       description: 'Press the barbell overhead from shoulder height.',
@@ -327,6 +332,22 @@ List<Exercise> buildDefaultExercises() {
       description: 'Use leg drive to help press barbell overhead.',
       muscleGroup: 'Shoulders',
       category: 'Barbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Dumbbell Shoulder Press',
+      description:
+          'Press dumbbells overhead from shoulder height, seated or standing.',
+      muscleGroup: 'Shoulders',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Arnold Press',
+      description:
+          'Dumbbell press that starts palms-in at the chin and rotates to palms-forward as you press.',
+      muscleGroup: 'Shoulders',
+      category: 'Dumbbell',
       isCustom: false,
     ),
     Exercise.create(
@@ -353,6 +374,8 @@ List<Exercise> buildDefaultExercises() {
       category: 'Machine',
       isCustom: false,
     ),
+
+    // Shoulders – raises, rear delts and traps
     Exercise.create(
       name: 'Lateral Raise',
       description:
@@ -362,11 +385,35 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
+      name: 'Cable Lateral Raise',
+      description:
+          'Raise a low cable handle out to the side for constant tension on the side delts.',
+      muscleGroup: 'Shoulders',
+      category: 'Cable',
+      isCustom: false,
+    ),
+    Exercise.create(
       name: 'Lateral Raise Machine',
       description:
           'Machine version of lateral raises that guides the movement path for consistent shoulder abduction.',
       muscleGroup: 'Shoulders',
       category: 'Machine',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Front Raise',
+      description:
+          'Raise dumbbells straight in front of you to shoulder height to target the front delts.',
+      muscleGroup: 'Shoulders',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Dumbbell Rear Delt Fly',
+      description:
+          'Hinge forward and raise dumbbells out to the sides to target the rear delts.',
+      muscleGroup: 'Shoulders',
+      category: 'Dumbbell',
       isCustom: false,
     ),
     Exercise.create(
@@ -399,12 +446,27 @@ List<Exercise> buildDefaultExercises() {
       category: 'Barbell',
       isCustom: false,
     ),
+    Exercise.create(
+      name: 'Dumbbell Shrug',
+      description:
+          'Hold dumbbells at your sides and lift your shoulders toward your ears.',
+      muscleGroup: 'Shoulders',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
 
     // Arms – biceps
     Exercise.create(
       name: 'Barbell Curl',
+      description: 'Curl the barbell with palms facing up to work the biceps.',
+      muscleGroup: 'Arms',
+      category: 'Barbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'EZ-Bar Curl',
       description:
-          'Curl the barbell with palms facing up to work the biceps.',
+          'Curl an EZ-bar using its angled grip, which is easier on the wrists.',
       muscleGroup: 'Arms',
       category: 'Barbell',
       isCustom: false,
@@ -426,6 +488,22 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
+      name: 'Incline Dumbbell Curl',
+      description:
+          'Curl dumbbells while lying back on an incline bench, stretching the biceps at the bottom.',
+      muscleGroup: 'Arms',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Concentration Curl',
+      description:
+          'Seated, brace your elbow against your inner thigh and curl one dumbbell.',
+      muscleGroup: 'Arms',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
       name: 'Cable Curl',
       description: 'Curl the cable upward to work the biceps.',
       muscleGroup: 'Arms',
@@ -441,7 +519,7 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Bicep Curl Machine',
+      name: 'Biceps Curl Machine',
       description:
           'Isolated machine for bicep curls with fixed movement path for consistent training.',
       muscleGroup: 'Arms',
@@ -490,10 +568,19 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Triceps Extension',
-      description: 'Extend the arm to work the triceps muscle.',
+      name: 'Dumbbell Triceps Extension',
+      description:
+          'Hold one dumbbell overhead with both hands, lower it behind your head, then extend your arms.',
       muscleGroup: 'Arms',
       category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Overhead Cable Triceps Extension',
+      description:
+          'Facing away from the cable, extend a rope overhead to emphasize the long head of the triceps.',
+      muscleGroup: 'Arms',
+      category: 'Cable',
       isCustom: false,
     ),
     Exercise.create(
@@ -505,11 +592,35 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Tricep Extension Machine',
+      name: 'Triceps Kickback',
+      description:
+          'Hinge forward with your upper arm by your side and extend the dumbbell back.',
+      muscleGroup: 'Arms',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Triceps Extension Machine',
       description:
           'Seated machine that isolates the triceps through guided elbow extension.',
       muscleGroup: 'Arms',
       category: 'Machine',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Dip',
+      description:
+          'Lower and raise your body between parallel bars to work the triceps and chest.',
+      muscleGroup: 'Arms, Chest',
+      category: 'Bodyweight',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Assisted Dip',
+      description:
+          'Lower and raise your body with assistance to work the triceps and chest.',
+      muscleGroup: 'Arms, Chest',
+      category: 'Assisted bodyweight',
       isCustom: false,
     ),
     Exercise.create(
@@ -520,8 +631,16 @@ List<Exercise> buildDefaultExercises() {
       category: 'Machine',
       isCustom: false,
     ),
+    Exercise.create(
+      name: 'Diamond Push-up',
+      description:
+          'Push-up with your hands close together under your chest to emphasize the triceps.',
+      muscleGroup: 'Arms, Chest',
+      category: 'Bodyweight',
+      isCustom: false,
+    ),
 
-    // Arms – forearms
+    // Arms – forearms and grip
     Exercise.create(
       name: 'Reverse Grip Barbell Curl',
       description: 'Curl with palms facing down to target forearms.',
@@ -531,8 +650,7 @@ List<Exercise> buildDefaultExercises() {
     ),
     Exercise.create(
       name: 'Barbell Wrist Curl',
-      description:
-          'Seated with forearms on thighs, curl barbell with wrists.',
+      description: 'Seated with forearms on thighs, curl barbell with wrists.',
       muscleGroup: 'Arms',
       category: 'Barbell',
       isCustom: false,
@@ -543,6 +661,14 @@ List<Exercise> buildDefaultExercises() {
           'Dedicated machine for targeted forearm development through wrist movements.',
       muscleGroup: 'Arms',
       category: 'Machine',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: "Farmer's Carry",
+      description:
+          'Walk while holding heavy dumbbells or handles at your sides.',
+      muscleGroup: 'Arms, Core',
+      category: 'Dumbbell',
       isCustom: false,
     ),
 
@@ -579,6 +705,14 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
+      name: 'Goblet Squat',
+      description:
+          'Squat while holding one dumbbell or kettlebell at your chest.',
+      muscleGroup: 'Legs',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
       name: 'Bodyweight Squat',
       description:
           'Lower your body by bending your knees and hips, then return to standing.',
@@ -589,15 +723,7 @@ List<Exercise> buildDefaultExercises() {
     Exercise.create(
       name: 'Hack Squat Machine',
       description:
-          'Angled sled machine that allows for back-supported squatting motions with reduced spinal loading.',
-      muscleGroup: 'Legs',
-      category: 'Machine',
-      isCustom: false,
-    ),
-    Exercise.create(
-      name: 'Hack Squat Press',
-      description:
-          'Hack squat variation with a pressing sled for quad-focused work.',
+          'Angled sled machine for back-supported squats with reduced spinal loading, including leg press/hack squat combo machines.',
       muscleGroup: 'Legs',
       category: 'Machine',
       isCustom: false,
@@ -634,14 +760,6 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Leg Press Hack Squat Combo',
-      description:
-          'Dual-function machine allowing both leg press and hack squat movements.',
-      muscleGroup: 'Legs',
-      category: 'Machine',
-      isCustom: false,
-    ),
-    Exercise.create(
       name: 'Barbell Lunge',
       description: 'Step forward with one leg while holding a barbell.',
       muscleGroup: 'Legs',
@@ -653,6 +771,22 @@ List<Exercise> buildDefaultExercises() {
       description: 'Step forward and lower your body to work the legs.',
       muscleGroup: 'Legs',
       category: 'Bodyweight',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Bulgarian Split Squat',
+      description:
+          'With your rear foot on a bench, lower into a single-leg squat holding dumbbells.',
+      muscleGroup: 'Legs',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Step-up',
+      description:
+          'Step onto a box or bench holding dumbbells and drive up through the front leg.',
+      muscleGroup: 'Legs',
+      category: 'Dumbbell',
       isCustom: false,
     ),
     Exercise.create(
@@ -673,8 +807,17 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Leg Curl',
-      description: 'Curl your legs to work the hamstrings.',
+      name: 'Dumbbell Romanian Deadlift',
+      description:
+          'Hinge at the hips holding dumbbells, knees slightly bent, to load the hamstrings.',
+      muscleGroup: 'Legs, Back',
+      category: 'Dumbbell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Lying Leg Curl',
+      description:
+          'Lie face down on the machine and curl the pad toward your glutes to work the hamstrings.',
       muscleGroup: 'Legs',
       category: 'Machine',
       isCustom: false,
@@ -685,6 +828,14 @@ List<Exercise> buildDefaultExercises() {
           'Seated machine targeting the hamstrings through controlled knee flexion.',
       muscleGroup: 'Legs',
       category: 'Machine',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Nordic Curl',
+      description:
+          'Anchor your heels and lower your body forward under control using the hamstrings.',
+      muscleGroup: 'Legs',
+      category: 'Bodyweight',
       isCustom: false,
     ),
     Exercise.create(
@@ -712,11 +863,19 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Glute Drive Machine',
+      name: 'Kettlebell Swing',
       description:
-          'Specialized machine for performing hip thrusts with optimal glute activation.',
+          'Hinge and snap your hips forward to swing a kettlebell to chest height.',
       muscleGroup: 'Legs',
-      category: 'Machine',
+      category: 'Kettlebell',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Cable Glute Kickback',
+      description:
+          'With an ankle strap on a low cable, kick one leg straight back to work the glutes.',
+      muscleGroup: 'Legs',
+      category: 'Cable',
       isCustom: false,
     ),
     Exercise.create(
@@ -787,6 +946,14 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
+      name: 'Side Plank',
+      description:
+          'Hold your body in a straight line on one forearm to work the obliques.',
+      muscleGroup: 'Core',
+      category: 'Bodyweight',
+      isCustom: false,
+    ),
+    Exercise.create(
       name: 'Hollow Hold',
       description: 'Hold body in curved position on back.',
       muscleGroup: 'Core',
@@ -794,9 +961,24 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
-      name: 'Crunch',
+      name: 'Dead Bug',
       description:
-          'Lie on your back and lift your shoulders to work the abs.',
+          'On your back, extend the opposite arm and leg while keeping your lower back flat.',
+      muscleGroup: 'Core',
+      category: 'Bodyweight',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Crunch',
+      description: 'Lie on your back and lift your shoulders to work the abs.',
+      muscleGroup: 'Core',
+      category: 'Bodyweight',
+      isCustom: false,
+    ),
+    Exercise.create(
+      name: 'Sit-up',
+      description:
+          'Lie on your back with knees bent and curl all the way up to sitting.',
       muscleGroup: 'Core',
       category: 'Bodyweight',
       isCustom: false,
@@ -811,15 +993,7 @@ List<Exercise> buildDefaultExercises() {
     Exercise.create(
       name: 'Ab Crunch Machine',
       description:
-          'Resistance machine that guides the upper body through a controlled crunch motion.',
-      muscleGroup: 'Core',
-      category: 'Machine',
-      isCustom: false,
-    ),
-    Exercise.create(
-      name: 'Seated Ab Crunch Machine',
-      description:
-          'Seated machine targeting abdominal crunch movement with fixed resistance.',
+          'Seated resistance machine that guides the upper body through a controlled crunch.',
       muscleGroup: 'Core',
       category: 'Machine',
       isCustom: false,
@@ -861,6 +1035,14 @@ List<Exercise> buildDefaultExercises() {
       isCustom: false,
     ),
     Exercise.create(
+      name: 'Pallof Press',
+      description:
+          'Standing side-on to a cable, press the handle straight out and resist the rotation.',
+      muscleGroup: 'Core',
+      category: 'Cable',
+      isCustom: false,
+    ),
+    Exercise.create(
       name: 'Rotary Torso Machine',
       description:
           'Seated twisting machine targeting the obliques and rotational core muscles.',
@@ -873,26 +1055,6 @@ List<Exercise> buildDefaultExercises() {
       description: 'Alternate bringing knees to chest in a plank position.',
       muscleGroup: 'Core',
       category: 'Bodyweight',
-      isCustom: false,
-    ),
-
-    // Neck
-    Exercise.create(
-      name: 'Neck Flexion Machine',
-      description:
-          'Specialized machine for safely training neck muscles through controlled resistance.',
-      muscleGroup: 'Neck',
-      category: 'Machine',
-      isCustom: false,
-    ),
-
-    // Multi-purpose stations
-    Exercise.create(
-      name: 'Functional Trainer',
-      description:
-          'Versatile cable machine with adjustable heights for full-body functional training.',
-      muscleGroup: 'Multiple',
-      category: 'Cable',
       isCustom: false,
     ),
 

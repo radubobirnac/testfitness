@@ -1,9 +1,19 @@
 import 'package:testfitness/data/default_exercises.dart';
 import 'package:testfitness/services/database_interface.dart';
+import 'package:testfitness/services/exercise_catalog_migration.dart';
 import 'package:testfitness/utils/app_logger.dart';
 
 class ExerciseSeedService {
+  /// Migrates renamed / merged / relabeled built-ins (keeping history), then
+  /// adds any missing defaults by name. Returns the number added.
   static Future<int> ensureDefaultExercises(DatabaseInterface db) async {
+    try {
+      await ExerciseCatalogMigration.run(db);
+    } catch (e, stackTrace) {
+      // Never block startup or import on the migration; it retries next run.
+      AppLogger.error('Exercise catalog migration failed', e, stackTrace);
+    }
+
     final existing = await db.getExercises();
     final existingKeys = <String>{};
     for (final exercise in existing) {
