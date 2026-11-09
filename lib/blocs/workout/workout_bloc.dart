@@ -177,7 +177,6 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
           workouts: workouts,
           filteredWorkouts: filteredWorkouts,
           isLoading: false,
-          successMessage: 'Workout created successfully',
         ));
       }
 
@@ -228,7 +227,6 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
           filteredWorkouts: filteredWorkouts,
           currentWorkout: updatedCurrentWorkout,
           isLoading: false,
-          successMessage: 'Workout updated successfully',
         ));
       }
 
@@ -266,7 +264,7 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         filteredWorkouts: filteredWorkouts,
         clearCurrentWorkout: deletedCurrent,
         isLoading: false,
-        successMessage: 'Workout deleted successfully',
+        successMessage: 'Workout deleted',
       ));
 
       AppLogger.info('Workout deleted successfully: ${event.workoutId}');
@@ -421,7 +419,7 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         filteredWorkouts: filteredWorkouts,
         currentWorkout: updatedCurrentWorkout,
         isLoading: false,
-        successMessage: 'Workout completed successfully',
+        successMessage: 'Workout completed',
       ));
 
       AppLogger.info('Workout completed successfully: ${event.workoutId}');
@@ -457,7 +455,7 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         workouts: workouts,
         filteredWorkouts: filteredWorkouts,
         isLoading: false,
-        successMessage: 'Workout duplicated successfully',
+        successMessage: 'Workout copied',
       ));
 
       AppLogger.info('Workout duplicated successfully. New ID: $newWorkoutId');
@@ -493,7 +491,6 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         filteredWorkouts: filteredWorkouts,
         currentWorkout: updatedWorkout,
         isLoadingCurrent: false,
-        successMessage: 'Set added successfully',
       ));
 
       AppLogger.info('Set added successfully to workout: ${event.workoutId}');
@@ -530,7 +527,6 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         filteredWorkouts: filteredWorkouts,
         currentWorkout: updatedWorkout,
         isLoadingCurrent: false,
-        successMessage: 'Set updated successfully',
       ));
 
       AppLogger.info('Set updated successfully in workout: ${event.workoutId}');
@@ -568,7 +564,6 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         filteredWorkouts: filteredWorkouts,
         currentWorkout: updatedWorkout,
         isLoadingCurrent: false,
-        successMessage: 'Set removed successfully',
       ));
 
       AppLogger.info(
@@ -606,7 +601,6 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         filteredWorkouts: filteredWorkouts,
         currentWorkout: updatedWorkout,
         isLoadingCurrent: false,
-        successMessage: 'Set completed successfully',
       ));
 
       AppLogger.info(
@@ -689,7 +683,6 @@ class WorkoutBloc extends Bloc<WorkoutEvent, WorkoutState> {
         filteredWorkouts: filteredWorkouts,
         currentWorkout: reloadedWorkout,
         isLoadingCurrent: false,
-        successMessage: 'Exercise replaced successfully',
       ));
 
       AppLogger.info(

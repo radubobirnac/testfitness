@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
-/// Animated feedback widget for success/error states
+/// Short, unobtrusive feedback: a compact pill at the top of the screen
+/// (success / error / info) or a throttled snackbar.
+///
+/// The pill shows one message at a time, slides in gently, disappears on its
+/// own (success 2 s, info 3 s, error 4 s) and goes away as soon as it is
+/// tapped or swiped. The same message is not repeated within 2 s.
 class AnimatedFeedback {
   static const Duration _dedupeWindow = Duration(seconds: 2);
   static OverlayEntry? _activeOverlay;
@@ -25,120 +30,73 @@ class AnimatedFeedback {
     _activeOverlay = null;
   }
 
-  static void _trackOverlay(String message) {
+  static void _showPill(
+    BuildContext context,
+    String message, {
+    required IconData icon,
+    required Color Function(ColorScheme) accent,
+    required Duration duration,
+  }) {
+    if (!context.mounted) return;
+    if (!_shouldShow(
+        message, _lastOverlayMessage, _lastOverlayAt, _dedupeWindow)) {
+      return;
+    }
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+
+    _dismissActiveOverlay();
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _FeedbackPill(
+        message: message,
+        icon: icon,
+        accent: accent,
+        duration: duration,
+        onDismissed: () {
+          if (_activeOverlay == entry) {
+            _activeOverlay = null;
+            entry.remove();
+          }
+        },
+      ),
+    );
+    _activeOverlay = entry;
     _lastOverlayMessage = message;
     _lastOverlayAt = DateTime.now();
+    overlay.insert(entry);
   }
 
-  static void _trackSnack(String message) {
-    _lastSnackMessage = message;
-    _lastSnackAt = DateTime.now();
-  }
-
-  /// Show animated success message
+  /// Brief confirmation for something the screen does not already show.
   static void showSuccess(
     BuildContext context,
     String message, {
-    Duration duration = const Duration(seconds: 3),
-  }) {
-    if (!context.mounted) return;
-    if (!_shouldShow(message, _lastOverlayMessage, _lastOverlayAt, _dedupeWindow)) {
-      return;
-    }
+    Duration duration = const Duration(seconds: 2),
+  }) =>
+      _showPill(context, message,
+          icon: Icons.check_circle_rounded,
+          accent: (c) => Colors.green.shade400,
+          duration: duration);
 
-    final overlay = Overlay.of(context);
-    late OverlayEntry overlayEntry;
-
-    _dismissActiveOverlay();
-    overlayEntry = OverlayEntry(
-      builder: (context) => _AnimatedFeedbackWidget(
-        message: message,
-        icon: Icons.check_circle,
-        color: Colors.green,
-        onDismiss: () {
-          if (_activeOverlay == overlayEntry) {
-            _activeOverlay = null;
-          }
-          overlayEntry.remove();
-        },
-        duration: duration,
-      ),
-    );
-
-    _activeOverlay = overlayEntry;
-    _trackOverlay(message);
-    overlay.insert(overlayEntry);
-  }
-
-  /// Show animated error message
   static void showError(
     BuildContext context,
     String message, {
     Duration duration = const Duration(seconds: 4),
-  }) {
-    if (!context.mounted) return;
-    if (!_shouldShow(message, _lastOverlayMessage, _lastOverlayAt, _dedupeWindow)) {
-      return;
-    }
+  }) =>
+      _showPill(context, message,
+          icon: Icons.error_rounded,
+          accent: (c) => Colors.red.shade300,
+          duration: duration);
 
-    final overlay = Overlay.of(context);
-    late OverlayEntry overlayEntry;
-
-    _dismissActiveOverlay();
-    overlayEntry = OverlayEntry(
-      builder: (context) => _AnimatedFeedbackWidget(
-        message: message,
-        icon: Icons.error,
-        color: Colors.red,
-        onDismiss: () {
-          if (_activeOverlay == overlayEntry) {
-            _activeOverlay = null;
-          }
-          overlayEntry.remove();
-        },
-        duration: duration,
-      ),
-    );
-
-    _activeOverlay = overlayEntry;
-    _trackOverlay(message);
-    overlay.insert(overlayEntry);
-  }
-
-  /// Show animated info message
   static void showInfo(
     BuildContext context,
     String message, {
     Duration duration = const Duration(seconds: 3),
-  }) {
-    if (!context.mounted) return;
-    if (!_shouldShow(message, _lastOverlayMessage, _lastOverlayAt, _dedupeWindow)) {
-      return;
-    }
-
-    final overlay = Overlay.of(context);
-    late OverlayEntry overlayEntry;
-
-    _dismissActiveOverlay();
-    overlayEntry = OverlayEntry(
-      builder: (context) => _AnimatedFeedbackWidget(
-        message: message,
-        icon: Icons.info,
-        color: Colors.blue,
-        onDismiss: () {
-          if (_activeOverlay == overlayEntry) {
-            _activeOverlay = null;
-          }
-          overlayEntry.remove();
-        },
-        duration: duration,
-      ),
-    );
-
-    _activeOverlay = overlayEntry;
-    _trackOverlay(message);
-    overlay.insert(overlayEntry);
-  }
+  }) =>
+      _showPill(context, message,
+          icon: Icons.info_rounded,
+          accent: (c) => Colors.lightBlue.shade300,
+          duration: duration);
 
   /// Show a throttled snackbar message
   static void showSnackBar(
@@ -161,144 +119,119 @@ class AnimatedFeedback {
         backgroundColor: backgroundColor,
       ),
     );
-    _trackSnack(message);
+    _lastSnackMessage = message;
+    _lastSnackAt = DateTime.now();
   }
 }
 
-class _AnimatedFeedbackWidget extends StatefulWidget {
+class _FeedbackPill extends StatefulWidget {
   final String message;
   final IconData icon;
-  final Color color;
-  final VoidCallback onDismiss;
+  final Color Function(ColorScheme) accent;
   final Duration duration;
+  final VoidCallback onDismissed;
 
-  const _AnimatedFeedbackWidget({
+  const _FeedbackPill({
     required this.message,
     required this.icon,
-    required this.color,
-    required this.onDismiss,
+    required this.accent,
     required this.duration,
+    required this.onDismissed,
   });
 
   @override
-  State<_AnimatedFeedbackWidget> createState() => _AnimatedFeedbackWidgetState();
+  State<_FeedbackPill> createState() => _FeedbackPillState();
 }
 
-class _AnimatedFeedbackWidgetState extends State<_AnimatedFeedbackWidget>
-    with TickerProviderStateMixin {
-  late AnimationController _slideController;
-  late AnimationController _scaleController;
-  late Animation<Offset> _slideAnimation;
-  late Animation<double> _scaleAnimation;
+class _FeedbackPillState extends State<_FeedbackPill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    duration: const Duration(milliseconds: 180),
+    reverseDuration: const Duration(milliseconds: 140),
+    vsync: this,
+  );
+  late final Animation<double> _curve =
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+  bool _dismissing = false;
 
   @override
   void initState() {
     super.initState();
-
-    _slideController = AnimationController(
-      duration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-
-    _scaleController = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, -1),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _slideController,
-      curve: Curves.elasticOut,
-    ));
-
-    _scaleAnimation = Tween<double>(
-      begin: 0.8,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _scaleController,
-      curve: Curves.easeOut,
-    ));
-
-    // Start animations
-    _slideController.forward();
-    _scaleController.forward();
-
-    // Auto dismiss after duration
-    Future.delayed(widget.duration, () {
-      if (mounted) {
-        _dismiss();
-      }
-    });
+    _controller.forward();
+    Future.delayed(widget.duration, _dismiss);
   }
 
-  void _dismiss() async {
-    await _slideController.reverse();
-    widget.onDismiss();
+  Future<void> _dismiss() async {
+    if (_dismissing || !mounted) return;
+    _dismissing = true;
+    await _controller.reverse();
+    if (mounted) widget.onDismissed();
   }
 
   @override
   void dispose() {
-    _slideController.dispose();
-    _scaleController.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final top = MediaQuery.paddingOf(context).top + 8;
     return Positioned(
-      top: MediaQuery.of(context).padding.top + 16,
-      left: 16,
-      right: 16,
-      child: SlideTransition(
-        position: _slideAnimation,
-        child: ScaleTransition(
-          scale: _scaleAnimation,
-          child: Material(
-            elevation: 8,
-            borderRadius: BorderRadius.circular(12),
-            color: Colors.transparent,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: widget.color.withValues(alpha: 0.9),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: widget.color.withValues(alpha: 0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
+      top: top,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: FadeTransition(
+          opacity: _curve,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.4),
+              end: Offset.zero,
+            ).animate(_curve),
+            child: Semantics(
+              liveRegion: true,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _dismiss,
+                onVerticalDragStart: (_) => _dismiss(),
+                onHorizontalDragStart: (_) => _dismiss(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: (MediaQuery.sizeOf(context).width - 32)
+                        .clamp(0.0, 420.0),
                   ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    widget.icon,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      widget.message,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
+                  child: Material(
+                    color: scheme.inverseSurface,
+                    elevation: 3,
+                    shape: const StadiumBorder(),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(widget.icon,
+                              size: 18, color: widget.accent(scheme)),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              widget.message,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: scheme.onInverseSurface,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                  GestureDetector(
-                    onTap: _dismiss,
-                    child: const Icon(
-                      Icons.close,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
