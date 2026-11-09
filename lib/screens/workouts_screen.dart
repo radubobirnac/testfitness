@@ -262,6 +262,12 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
   @override
   Widget build(BuildContext context) {
     return BlocListener<WorkoutBloc, WorkoutState>(
+      // Only new messages: success/error stay in state across later emits.
+      listenWhen: (previous, current) =>
+          (current.successMessage != null &&
+              current.successMessage != previous.successMessage) ||
+          (current.errorMessage != null &&
+              current.errorMessage != previous.errorMessage),
       listener: (context, state) {
         // Show success messages with enhanced feedback
         if (state.hasSuccess) {

@@ -119,6 +119,12 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return BlocConsumer<WorkoutBloc, WorkoutState>(
+      // Only new messages: success/error stay in state across later emits.
+      listenWhen: (previous, current) =>
+          (current.successMessage != null &&
+              current.successMessage != previous.successMessage) ||
+          (current.errorMessage != null &&
+              current.errorMessage != previous.errorMessage),
       listener: (context, state) {
         // Handle side effects with beautiful animations
         if (state.errorMessage != null) {
